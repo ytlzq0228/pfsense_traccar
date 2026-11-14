@@ -18,10 +18,10 @@
 
 ## 安装与使用
 
-本次构建产物在 `dist/pfSense-pkg-Traccar-0.1.5.pkg`，仅在上述 pfSense 版本实测。将包复制到目标机器后执行：
+本次构建产物在 `dist/pfSense-pkg-Traccar-0.1.6.pkg`，仅在上述 pfSense 版本实测。将包复制到目标机器后执行：
 
 ```sh
-pkg add /tmp/pfSense-pkg-Traccar-0.1.5.pkg
+pkg add /tmp/pfSense-pkg-Traccar-0.1.6.pkg
 ```
 
 依赖为对应 pfSense 软件源中的 `python311` 和 `py311-sqlite3`。测试机原本已安装这两个依赖。新机器若缺少依赖，先从其 **pfSense 对应的软件源** 安装，勿混用普通 FreeBSD 软件源的二进制包。

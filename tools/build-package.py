@@ -30,7 +30,7 @@ with tempfile.TemporaryDirectory(prefix='traccar-build-') as temporary:
         deps[name]=dict(origin=origin,version=version)
     manifest=dict(name='pfSense-pkg-Traccar',version=__version__,origin='net/pfSense-pkg-Traccar',
                   comment='Reliable USB GNSS tracker for Traccar',desc='CH340 userspace GPS, persistent outbox, native pfSense configuration and status.',
-                  maintainer='local@localhost',www='https://www.traccar.org/',prefix='/usr/local',
+                  maintainer='local@localhost',www='https://github.com/ytlzq0228/pfsense_traccar',prefix='/usr/local',
                   abi=subprocess.check_output(['pkg','config','ABI'],text=True).strip(),
                   arch=subprocess.check_output(['pkg','config','ABI'],text=True).strip(),
                   licenselogic='single',licenses=['MIT'],deps=deps,

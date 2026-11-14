@@ -66,7 +66,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 $pgtitle = [$tab === 'status' ? 'Status' : 'Services', 'Traccar GPS'];
+// head.inc builds its own help URL; replace only this page's generated links.
+ob_start();
 include('head.inc');
+$page_header = ob_get_clean();
+echo str_replace('href="' . $helpurl . '"',
+    'href="https://github.com/ytlzq0228/pfsense_traccar"', $page_header);
 if ($input_errors) { print_input_errors($input_errors); }
 if (isset($savemsg)) { print_info_box(htmlspecialchars($savemsg), 'success'); }
 // pfSense tab tuple: label, active flag, destination URL.
