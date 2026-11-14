@@ -168,8 +168,9 @@ class HTTPTests(unittest.TestCase):
         try:
             for code in (200,400,429,500,302):
                 Handler.code=code
-                self.assertEqual(post(dict(url='http://127.0.0.1:%d/'%server.server_port,payload={'id':'test','timestamp':1794634600.125}),1),code)
+                self.assertEqual(post(dict(url='http://127.0.0.1:%d/'%server.server_port,payload={'id':'test','timestamp':1794634600.125,'deviceTemp':47.1}),1),code)
             self.assertIn(b'timestamp=2026-11-14T05%3A36%3A40.125Z',bodies[0])
+            self.assertIn(b'deviceTemp=47.1',bodies[0])
         finally:
             server.shutdown(); server.server_close(); thread.join()
 

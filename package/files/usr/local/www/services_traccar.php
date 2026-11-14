@@ -183,6 +183,7 @@ events.push(function() {
                 ['最早 / 最新待传时间',date(q.oldest)+' / '+date(q.newest)],
                 ['累计成功 / 失败 / 容量淘汰',fmt(q.sent)+' / '+fmt(q.failures)+' / '+fmt(q.dropped)],
                 ['最后成功上报',date(q.last_success)],['最近容量淘汰',date(q.last_drop)],
+                ['设备温度',live && s.device_temp != null ? s.device_temp.toFixed(1)+' °C（'+fmt(s.device_temp_source)+'）' : '不可用'],
                 ['数据盘可用空间',((s.free_bytes||0)/1048576).toFixed(1)+' MiB'],['版本',s.version]
             ];
             values.forEach(v=>row(body,v));

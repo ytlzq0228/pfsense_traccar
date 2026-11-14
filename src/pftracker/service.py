@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import fcntl
 import json
 import logging
+import math
 from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
@@ -26,6 +27,7 @@ from .config import load, DEFAULTS
 from .nmea import NMEA, Sampler
 from .queue import Outbox
 from .usb import CH340
+from .temperature import read_temperature
 
 
 class Serial:
@@ -78,10 +80,12 @@ def post(item, timeout):
         return code
 
 
-def make_payload(fix, config, moving):
+def make_payload(fix, config, moving, device_temp=None):
     p = dict(id=config['device_id'], timestamp=fix['epoch'], lat=round(fix['lat'],7),
              lon=round(fix['lon'],7), valid='true', sat=fix['sat'], hdop=fix['hdop'],
              motion='true' if moving else 'false', fixQuality=fix['quality'])
+    if device_temp is not None and math.isfinite(device_temp) and -40 <= device_temp <= 150:
+        p['deviceTemp'] = round(device_temp, 1)
     for key in ('speed','bearing','altitude'):
         if fix[key] is not None:
             p[key] = round(fix[key], 3)
@@ -122,9 +126,26 @@ class Service:
         self.status = Path(status)
         self.state_lock = threading.Lock()
         self.network = dict(state='waiting', last_http=None, last_error='', next_retry_in=0)
+        self.temperature = (None, None, None)
+        self.temperature_worker = threading.Thread(target=self.update_temperature, daemon=True)
         self.storage_error = ''
         self.started = time.time()
         self.sent_worker = threading.Thread(target=self.upload, daemon=True)
+
+    def update_temperature(self):
+        # Hardware reads never block the USB acquisition or HTTP sender.
+        while not self.stop.is_set():
+            value, source = read_temperature()
+            with self.state_lock:
+                self.temperature = (value, source, time.monotonic())
+            self.stop.wait(10)
+
+    def temperature_snapshot(self):
+        with self.state_lock:
+            value, source, sampled = self.temperature
+        if sampled is None or time.monotonic()-sampled > 30:
+            return None, None
+        return value, source
 
     def upload(self):
         failures = 0
@@ -168,6 +189,7 @@ class Service:
         reconnect_at, last_state, next_status, last_valid_data = 0, None, 0, 0
         backoff = 1
         self.log.info('Starting version=%s source=%s device=%s', __version__, self.c['source'], self.c['device_id'])
+        self.temperature_worker.start()
         self.sent_worker.start()
         try:
             while not self.stop.is_set():
@@ -210,7 +232,7 @@ class Service:
                     try:
                         if shutil.disk_usage(self.directory).free < self.c['reserve_mb']*1024*1024:
                             raise OSError('Disk reserve reached; acquisition paused')
-                        payload = make_payload(fix, self.c, sampler.moving)
+                        payload = make_payload(fix, self.c, sampler.moving, self.temperature_snapshot()[0])
                         if self.outbox.enqueue(payload, self.c['server_url']) and self.positions:
                             self.positions.info(json.dumps(payload, separators=(',', ':')))
                         self.storage_error = ''
@@ -223,7 +245,8 @@ class Service:
                 if now >= next_status:
                     with self.state_lock:
                         network = dict(self.network)
-                    state = dict(version=__version__, pid=os.getpid(), updated=time.time(), started=self.started,
+                    device_temp, temp_source = self.temperature_snapshot()
+                    state = dict(device_temp=device_temp, device_temp_source=temp_source, version=__version__, pid=os.getpid(), updated=time.time(), started=self.started,
                                  gps=gps, moving=sampler.moving, queue=self.outbox.stats(), network=network,
                                  storage_error=self.storage_error, free_bytes=shutil.disk_usage(self.directory).free,
                                  source=self.c['source'], device=getattr(source, 'name', self.c['serial_path']) if source else None)
@@ -233,6 +256,7 @@ class Service:
             self.stop.set()
             if source:
                 source.close()
+            self.temperature_worker.join(timeout=1)
             self.sent_worker.join(timeout=self.c['http_timeout']+2)
             if not self.sent_worker.is_alive():
                 self.outbox.close()
