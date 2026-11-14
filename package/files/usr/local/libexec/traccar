@@ -1,0 +1,4 @@
+#!/bin/sh
+export PYTHONPATH=/usr/local/share/pftracker
+export PYTHONDONTWRITEBYTECODE=1
+exec /usr/local/bin/python3.11 -m pftracker.service "$@"

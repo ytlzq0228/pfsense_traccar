@@ -1,0 +1,36 @@
+#!/bin/sh
+# Native pfSense .sh service, supervised by FreeBSD daemon(8).
+. /etc/rc.subr
+name=traccar
+pidfile=/var/run/traccar.pid
+childfile=/var/run/traccar-child.pid
+running() {
+    [ -n "$(check_pidfile "$pidfile" /usr/sbin/daemon 2>/dev/null)" ]
+}
+start_tracker() {
+    running && return 0
+    [ -r /usr/local/etc/traccar.json ] || return 0
+    /usr/local/bin/python3.11 -c 'import json,sys; sys.exit(0 if json.load(open("/usr/local/etc/traccar.json")).get("enabled") else 1)' || return 0
+    /usr/local/libexec/traccar --validate || return 1
+    /usr/sbin/daemon -c -f -S -T traccar -R 5 -P "$pidfile" -p "$childfile" -t traccar /usr/local/libexec/traccar
+}
+stop_tracker() {
+    pid=$(check_pidfile "$pidfile" /usr/sbin/daemon 2>/dev/null)
+    if [ -n "$pid" ]; then
+        kill -TERM "$pid"
+        # daemon forwards TERM to the child and disables respawning.
+        count=0
+        while kill -0 "$pid" 2>/dev/null; do
+            count=$((count + 1))
+            [ "$count" -gt 40 ] && return 1
+            sleep 1
+        done
+    fi
+}
+case "$1" in
+start) start_tracker ;;
+stop) stop_tracker ;;
+restart) stop_tracker && start_tracker ;;
+status) running ;;
+*) echo 'Usage: traccar.sh {start|stop|restart|status}' >&2; exit 1 ;;
+esac

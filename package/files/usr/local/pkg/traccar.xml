@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<packagegui>
+  <name>Traccar</name>
+  <title>Services: Traccar</title>
+  <include_file>/usr/local/pkg/traccar.inc</include_file>
+  <menu><name>Traccar GPS</name><section>Services</section><url>/services_traccar.php</url></menu>
+  <menu><name>Traccar GPS</name><section>Status</section><url>/services_traccar.php?tab=status</url></menu>
+  <service><name>traccar</name><rcfile>traccar.sh</rcfile><executable>traccar</executable><description>GNSS tracker for Traccar</description><custom_php_service_status_command>is_pid_running("/var/run/traccar-child.pid")</custom_php_service_status_command></service>
+  <custom_php_install_command>traccar_install();</custom_php_install_command>
+  <custom_php_resync_config_command>traccar_sync();</custom_php_resync_config_command>
+  <custom_php_deinstall_command>traccar_uninstall();</custom_php_deinstall_command>
+</packagegui>
