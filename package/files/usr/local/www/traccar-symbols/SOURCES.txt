@@ -1,0 +1,4 @@
+Graphics: https://github.com/hessu/aprs-symbols/tree/f2286a9cd43eb6ba4501250b4c39fff111e3796c
+Index: https://github.com/hessu/aprs-symbol-index/tree/68a273408fa12ea01a9fc50b8bc3e32c31f0f508
+PNG assets and upstream notices are unmodified. symbols.json is a CODE/DESCRIPTION extraction from symbols.csv (CC BY-SA 4.0).
+Graphics have per-symbol copyright terms; see COPYRIGHT.md.

@@ -28,6 +28,7 @@ from .nmea import NMEA, Sampler
 from .queue import Outbox
 from .usb import CH340
 from .temperature import read_temperature
+from .aprs import Sender as APRSSender, make_item as make_aprs_item
 
 
 class Serial:
@@ -122,15 +123,19 @@ class Service:
         self.positions = logger('traccar.positions', self.directory/'positions.jsonl', config, True) if config['log_positions'] else None
         self.raw = logger('traccar.nmea', self.directory/'nmea.log', config, True) if config['log_nmea'] else None
         self.outbox = Outbox(self.directory/'queue.sqlite', config['max_points'], config['queue_mb'])
+        self.aprs_outbox = Outbox(self.directory/'aprs.sqlite', config['max_points'], config['queue_mb'])
         self.stop = threading.Event()
         self.status = Path(status)
         self.state_lock = threading.Lock()
-        self.network = dict(state='waiting', last_http=None, last_error='', next_retry_in=0)
+        self.network = dict(state='waiting' if config['traccar_enabled'] else 'disabled', last_http=None, last_error='', next_retry_in=0)
         self.temperature = (None, None, None)
         self.temperature_worker = threading.Thread(target=self.update_temperature, daemon=True)
         self.storage_error = ''
         self.started = time.time()
         self.sent_worker = threading.Thread(target=self.upload, daemon=True)
+        self.aprs = APRSSender(config, self.aprs_outbox, self.stop, self.log)
+        self.aprs_worker = threading.Thread(target=self.aprs.run, daemon=True)
+        self.storage_errors = {}
 
     def update_temperature(self):
         # Hardware reads never block the USB acquisition or HTTP sender.
@@ -148,6 +153,8 @@ class Service:
         return value, source
 
     def upload(self):
+        if not self.c['traccar_enabled']:
+            return
         failures = 0
         while not self.stop.is_set():
             try:
@@ -184,13 +191,39 @@ class Service:
                 continue
             self.stop.wait(1/self.c['upload_rate'])
 
+    def capture(self, fix, sampler, aprs=False):
+        channel = 'APRS' if aprs else 'Traccar'
+        try:
+            if shutil.disk_usage(self.directory).free < self.c['reserve_mb']*1024*1024:
+                raise OSError('Disk reserve reached; acquisition paused')
+            if aprs:
+                payload = make_aprs_item(fix, self.c)
+                endpoint = 'aprs://%s:%s' % (self.c['aprs_host'], self.c['aprs_port'])
+                queued = self.aprs_outbox.enqueue(payload, endpoint)
+            else:
+                payload = make_payload(fix, self.c, sampler.moving, self.temperature_snapshot()[0])
+                queued = self.outbox.enqueue(payload, self.c['server_url'])
+            if queued and self.positions:
+                self.positions.info(json.dumps({'channel': channel, **payload}, ensure_ascii=False, separators=(',', ':')))
+            self.storage_errors.pop(channel, None)
+        except Exception as error:
+            message = channel + ': ' + str(error)
+            if self.storage_errors.get(channel) != message:
+                self.log.error('Cannot queue position: %s', message)
+            self.storage_errors[channel] = message
+            sampler.last_sample = None
+        self.storage_error = '; '.join(self.storage_errors.values())
+
     def run(self):
         parser, sampler, source = NMEA(), Sampler(self.c), None
+        aprs_sampler = Sampler({**self.c, 'moving_interval': self.c['aprs_moving_interval'],
+                                'stopped_interval': self.c['aprs_stopped_interval']})
         reconnect_at, last_state, next_status, last_valid_data = 0, None, 0, 0
         backoff = 1
         self.log.info('Starting version=%s source=%s device=%s', __version__, self.c['source'], self.c['device_id'])
         self.temperature_worker.start()
         self.sent_worker.start()
+        self.aprs_worker.start()
         try:
             while not self.stop.is_set():
                 now = time.monotonic()
@@ -199,7 +232,7 @@ class Service:
                         source = CH340(self.c['baud'], self.c['usb_selector']) if self.c['source'] == 'ch340' else Serial(self.c['serial_path'], self.c['baud'])
                         # Invalidate ALL epochs from the old connection.
                         parser = NMEA()
-                        sampler.was_valid = False
+                        sampler.was_valid = aprs_sampler.was_valid = False
                         last_valid_data = now
                         self.log.info('GPS opened: %s', getattr(source, 'name', self.c['serial_path']))
                     if source is not None:
@@ -228,26 +261,18 @@ class Service:
                     self.log.info('GPS state: %s', gps['reason'])
                     last_state = state
                 fix = sampler.choose(gps, now)
-                if fix:
-                    try:
-                        if shutil.disk_usage(self.directory).free < self.c['reserve_mb']*1024*1024:
-                            raise OSError('Disk reserve reached; acquisition paused')
-                        payload = make_payload(fix, self.c, sampler.moving, self.temperature_snapshot()[0])
-                        if self.outbox.enqueue(payload, self.c['server_url']) and self.positions:
-                            self.positions.info(json.dumps(payload, separators=(',', ':')))
-                        self.storage_error = ''
-                    except Exception as e:
-                        error = str(e)
-                        if error != self.storage_error:
-                            self.log.error('Cannot queue position: %s', error)
-                        self.storage_error = error
-                        sampler.last_sample = None
+                if fix and self.c['traccar_enabled']:
+                    self.capture(fix, sampler)
+                aprs_fix = aprs_sampler.choose(gps, now)
+                if aprs_fix and self.c['aprs_enabled']:
+                    self.capture(aprs_fix, aprs_sampler, aprs=True)
                 if now >= next_status:
                     with self.state_lock:
                         network = dict(self.network)
                     device_temp, temp_source = self.temperature_snapshot()
                     state = dict(device_temp=device_temp, device_temp_source=temp_source, version=__version__, pid=os.getpid(), updated=time.time(), started=self.started,
                                  gps=gps, moving=sampler.moving, queue=self.outbox.stats(), network=network,
+                                 aprs={**self.aprs.snapshot(), 'queue': self.aprs_outbox.stats()},
                                  storage_error=self.storage_error, free_bytes=shutil.disk_usage(self.directory).free,
                                  source=self.c['source'], device=getattr(source, 'name', self.c['serial_path']) if source else None)
                     atomic_json(self.status, state)
@@ -258,6 +283,9 @@ class Service:
                 source.close()
             self.temperature_worker.join(timeout=1)
             self.sent_worker.join(timeout=self.c['http_timeout']+2)
+            self.aprs_worker.join(timeout=self.c['aprs_timeout']+2)
+            if not self.aprs_worker.is_alive():
+                self.aprs_outbox.close()
             if not self.sent_worker.is_alive():
                 self.outbox.close()
             self.log.info('Stopped')

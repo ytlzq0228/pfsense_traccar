@@ -55,10 +55,10 @@ function traccar_status() {
     $s['stale'] = empty($s['updated']) || time() - $s['updated'] > 10;
     return $s;
 }
-function traccar_fields() {
-    return [
+function traccar_fields($tab = 'system') {
+    $fields = [
         '基本设置' => [
-            'enabled' => ['启用服务', 'checkbox', '开机启动，持续采集并上报有效定位。'],
+            'enabled' => ['启用服务', 'checkbox', '总开关：开机启动 GPS 采集；各上报通道在各自配置页单独启用。'],
             'server_url' => ['Traccar 上报 URL', 'text', 'OsmAnd HTTP(S) 接收地址；历史缓存保留采集时的地址和设备 ID。'],
             'device_id' => ['设备 ID', 'text', '必须与 Traccar 中的设备唯一标识一致。'],
             'source' => ['GPS 读取方式', 'select', 'CH340 直接 USB 无需串口驱动；普通串口适用于已有 /dev/cua* 节点的设备。', ['ch340'=>'CH340 直接 USB', 'serial'=>'系统串口']],
@@ -79,17 +79,59 @@ function traccar_fields() {
         ],
         '缓存与网络' => [
             'queue_dir' => ['持久化数据目录','text','默认 /conf/traccar；仅允许 /conf 或 /mnt 子目录。不要使用内存盘。改目录后旧缓存留在原目录，可切回继续补传。'],
-            'max_points' => ['最大缓存点数','number','默认 100000；超限淘汰最旧未上传记录，并在状态页累计告警。'],
-            'queue_mb' => ['缓存预算（MiB）','number','按数据长度及每点固定开销估算；数据库索引、WAL 和日志另占空间。'],
+            'max_points' => ['每通道最大缓存点数','number','默认 100000；超限淘汰最旧未上传记录，并在状态页累计告警。'],
+            'queue_mb' => ['每通道缓存预算（MiB）','number','Traccar 与 APRS 各自独立使用此预算；数据库索引、WAL 和日志另占空间。'],
             'reserve_mb' => ['磁盘保留空间（MiB）','number','默认 64；低于此值暂停新增轨迹，继续尝试补传并告警。'],
             'http_timeout' => ['单次请求超时（秒）','number','默认 3；失败重试等待逐步增加，最高约 60 秒。'],
             'upload_rate' => ['最大上传速率（点/秒）','number','实时新点优先，其余时隙补传历史；默认 5，实际速率受网络响应时间限制。'],
         ],
         '本地日志' => [
-            'log_positions' => ['记录位置日志','checkbox','将实际入队位置记录到轮转的 positions.jsonl。'],
+            'log_positions' => ['记录位置日志','checkbox','将两个通道实际入队的位置记录到 positions.jsonl；服务日志同时记录 APRS 已写入连接的报文。'],
             'log_nmea' => ['记录原始 NMEA','checkbox','调试使用；仅记录通过校验的语句，持续运行会增加磁盘写入。'],
             'log_mb' => ['每个日志文件上限（MiB）','number','服务日志、位置日志、原始 NMEA 各自独立轮转。'],
             'log_backups' => ['每类日志保留备份数','number','默认 3；不包括当前文件。'],
         ],
     ];
+    if ($tab === 'traccar') {
+        return [
+            'Traccar 上报' => [
+                'traccar_enabled' => ['启用 Traccar','checkbox','关闭后暂停此通道的采集和上传，保留未上传缓存。'],
+                'server_url' => $fields['基本设置']['server_url'],
+                'device_id' => $fields['基本设置']['device_id'],
+            ],
+            '采样与补传' => [
+                'moving_interval' => $fields['定位与采样']['moving_interval'],
+                'stopped_interval' => $fields['定位与采样']['stopped_interval'],
+                'http_timeout' => $fields['缓存与网络']['http_timeout'],
+                'upload_rate' => $fields['缓存与网络']['upload_rate'],
+            ],
+        ];
+    }
+    if ($tab === 'aprs') {
+        return [
+            'APRS-IS 连接' => [
+                'aprs_enabled' => ['启用 APRS','checkbox','通过 APRS-IS 网络上报；关闭后保留未发送缓存。'],
+                'aprs_host' => ['服务器','text','仅填写域名或 IPv4 地址，不含端口。'],
+                'aprs_port' => ['TCP 端口','number','通常为 14580（过滤端口）。'],
+                'aprs_callsign' => ['呼号及 SSID','text','例如 BI1FQO-PF；登录和位置报文使用同一标识，最多 9 个大写字母、数字和连字符。'],
+                'aprs_passcode' => ['Passcode','password','留空保留已保存的值；首次启用时必填。不会回显到页面或日志。'],
+                'aprs_timeout' => ['连接/登录超时（秒）','number','失败自动重连，认证失败等待 60 秒再试。'],
+            ],
+            '台站显示' => [
+                'aprs_symbol_table' => ['图标表 / 覆盖字符','text','可从下方预览表选择自动填写；普通表 /，备用表反斜杠，覆盖字符 0–9、A–Z。'],
+                'aprs_symbol' => ['图标代码','text','选择下方图标会自动生成代码；也可手工填写一个 ASCII 字符。'],
+                'aprs_comment' => ['备注','text','支持中文，最多 160 个 UTF-8 字节；客户端的中文显示能力可能不同。'],
+            ],
+            '采样与历史补传' => [
+                'aprs_moving_interval' => ['移动间隔（秒）','number','默认 30，最小 30。使用系统配置中的运动判定和定位质量要求。'],
+                'aprs_stopped_interval' => ['停止间隔（秒）','number','默认 300，最小 30；恢复有效定位立即入队。'],
+                'aprs_upload_interval' => ['发送最小间隔（秒）','number','默认 5；实时新点优先，其余时隙补传历史。报文保留原始 UTC 时间。'],
+            ],
+        ];
+    }
+    unset($fields['基本设置']['server_url'], $fields['基本设置']['device_id'],
+          $fields['定位与采样']['moving_interval'], $fields['定位与采样']['stopped_interval'],
+          $fields['缓存与网络']['http_timeout'], $fields['缓存与网络']['upload_rate']);
+    return ['服务与 GPS' => $fields['基本设置'], '定位质量与运动判定' => $fields['定位与采样'],
+            '持久缓存' => $fields['缓存与网络'], '本地日志' => $fields['本地日志']];
 }

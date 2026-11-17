@@ -9,7 +9,8 @@ require('guiconfig.inc');
 require_once('/usr/local/pkg/traccar.inc');
 require_once('classes/Form.class.php');
 
-$tab = ($_GET['tab'] ?? '') === 'status' ? 'status' : 'settings';
+$tab = $_GET['tab'] ?? 'system';
+if (!in_array($tab, ['system','traccar','aprs','status'], true)) { $tab = 'system'; }
 $settings = traccar_config();
 if (($_GET['action'] ?? '') === 'status') {
     header('Content-Type: application/json; charset=utf-8');
@@ -35,16 +36,24 @@ if (($_GET['action'] ?? '') === 'log') {
 $input_errors = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['save'])) {
-        $candidate = traccar_defaults();
-        foreach ($candidate as $key=>$default) {
+        $candidate = $settings;
+        $defaults = traccar_defaults();
+        $editable = [];
+        foreach (traccar_fields($tab) as $section) { $editable = array_merge($editable, $section); }
+        if ($tab === 'status') { $input_errors[] = '请选择配置页保存参数。'; $editable = []; }
+        foreach ($editable as $key=>$spec) {
+            $default = $defaults[$key];
             if (is_bool($default)) { $candidate[$key] = isset($_POST[$key]); }
             elseif (is_int($default) || is_float($default)) {
                 $raw = trim((string)($_POST[$key] ?? ''));
                 if (!is_numeric($raw)) { $input_errors[] = "$key: 必须填写数字"; continue; }
-                $integer_fields = ['baud','min_sat','max_points','queue_mb','reserve_mb','log_mb','log_backups'];
+                $integer_fields = ['baud','min_sat','max_points','queue_mb','reserve_mb','log_mb','log_backups','aprs_port'];
                 if (in_array($key,$integer_fields,true) && (float)$raw != (int)$raw) { $input_errors[] = "$key: 必须填写整数"; }
                 $candidate[$key] = in_array($key,$integer_fields,true) ? (int)$raw : (float)$raw;
-            } else { $candidate[$key] = trim((string)($_POST[$key] ?? '')); }
+            } else {
+                $value = trim((string)($_POST[$key] ?? ''));
+                if ($key !== 'aprs_passcode' || $value !== '') { $candidate[$key] = $value; }
+            }
         }
         if (!$input_errors) {
             try {
@@ -75,18 +84,28 @@ echo str_replace('href="' . $helpurl . '"',
 if ($input_errors) { print_input_errors($input_errors); }
 if (isset($savemsg)) { print_info_box(htmlspecialchars($savemsg), 'success'); }
 // pfSense tab tuple: label, active flag, destination URL.
-$tabs = [['配置',$tab==='settings','services_traccar.php'],['状态与日志',$tab==='status','services_traccar.php?tab=status']];
+$tabs = [['系统配置',$tab==='system','services_traccar.php'],
+         ['Traccar 配置',$tab==='traccar','services_traccar.php?tab=traccar'],
+         ['APRS 配置',$tab==='aprs','services_traccar.php?tab=aprs'],
+         ['状态与日志',$tab==='status','services_traccar.php?tab=status']];
 display_top_tabs($tabs);
-if ($tab === 'settings') {
+if ($tab !== 'status') {
+    if ($tab === 'aprs') {
+        print_info_box('APRS 使用独立持久缓存，实时优先、历史限速补传。认证通过后，报文成功写入 TCP 连接即移出待发队列；APRS-IS 没有逐条位置回执，无法保证对端已保存，连接中断附近可能漏传或重传。', 'info');
+    }
     $form = new Form('保存并应用');
-    foreach (traccar_fields() as $title=>$fields) {
+    $form->setAction('services_traccar.php?tab=' . $tab);
+    foreach (traccar_fields($tab) as $title=>$fields) {
         $section = new Form_Section($title);
         foreach ($fields as $key=>$spec) {
             [$label,$type,$help] = $spec;
             if ($type === 'checkbox') { $field = new Form_Checkbox($key,$label,$help,!empty($settings[$key])); }
             elseif ($type === 'select') { $field = new Form_Select($key,$label,$settings[$key],$spec[3]); $field->setHelp($help); }
-            else { $field = new Form_Input($key,$label,$type,$settings[$key]); $field->setHelp($help); if ($type==='number') { $field->setAttribute('step','any'); } }
+            else { $field = new Form_Input($key,$label,$type,$type === 'password' ? '' : $settings[$key]); $field->setHelp($help); if ($type==='number') { $field->setAttribute('step','any'); } }
             $section->addInput($field);
+            if ($tab === 'aprs' && $key === 'aprs_symbol') {
+                $section->addInput(new Form_StaticText('选择图标', file_get_contents('/usr/local/www/traccar-symbols/picker.html')));
+            }
         }
         $form->add($section);
     }
@@ -151,7 +170,7 @@ if ($tab === 'settings') {
 <p><a href="services_traccar.php?action=log&amp;kind=service" target="_blank" rel="noopener">服务日志</a> ·
 <a href="services_traccar.php?action=log&amp;kind=positions" target="_blank" rel="noopener">位置日志</a> ·
 <a href="services_traccar.php?action=log&amp;kind=nmea" target="_blank" rel="noopener">NMEA 日志</a></p>
-<p>历史记录收到成功响应后才删除。HTTP 响应丢失时可能重传同一时间戳的点。位置和日志保存在配置的数据目录中。</p>
+<p>Traccar 收到 HTTP 成功响应后删除缓存；APRS 在认证连接上完成 TCP 写入后删除缓存，无逐条接收回执。两通道各自保存历史、实时优先补传，断线附近可能重传；APRS 也可能漏传。位置和日志保存在系统配置的数据目录中。</p>
 </div></div>
 <script src="/js/traccar-satellites.js?v=0.1.2"></script>
 <script>
@@ -168,7 +187,7 @@ events.push(function() {
         try {
             const response = await fetch('services_traccar.php?action=status', {cache:'no-store'});
             if (!response.ok) throw new Error('HTTP ' + response.status);
-            const s = await response.json(), g = s.gps || {}, f = g.fix || {}, q = s.queue || {}, n = s.network || {};
+            const s = await response.json(), g = s.gps || {}, f = g.fix || {}, q = s.queue || {}, n = s.network || {}, a = s.aprs || {}, aq = a.queue || {};
             const live = s.running && !s.stale;
             document.getElementById('refresh-state').textContent = '更新于 ' + date(s.updated);
             const body = document.getElementById('tracker-status'); body.replaceChildren();
@@ -183,11 +202,17 @@ events.push(function() {
                 ['高度（m） / 航向（°）',fmt(f.altitude)+' / '+fmt(f.bearing)],
                 ['参与定位卫星 / HDOP',fmt(f.sat)+' / '+fmt(f.hdop)],
                 ['NMEA 有效 / 错误语句',fmt(g.valid_lines)+' / '+fmt(g.bad_lines)],
-                ['上传状态',fmt(n.state)+' · HTTP '+fmt(n.last_http)],['最近上传错误',n.last_error || '无'],
+                ['Traccar 上传状态',fmt(n.state)+' · HTTP '+fmt(n.last_http)],['最近上传错误',n.last_error || '无'],
                 ['待传点数 / 数据预算占用',fmt(q.count)+' / '+((q.payload_bytes||0)/1048576).toFixed(2)+' MiB'],
                 ['最早 / 最新待传时间',date(q.oldest)+' / '+date(q.newest)],
                 ['累计成功 / 失败 / 容量淘汰',fmt(q.sent)+' / '+fmt(q.failures)+' / '+fmt(q.dropped)],
                 ['最后成功上报',date(q.last_success)],['最近容量淘汰',date(q.last_drop)],
+                ['APRS 状态 / 登录认证',fmt(a.state)+' / '+(live && a.verified ? '已认证' : '未认证')],
+                ['APRS 最近错误',a.last_error || '无'],
+                ['APRS 待发 / 已写入连接 / 失败 / 淘汰',fmt(aq.count)+' / '+fmt(aq.sent)+' / '+fmt(aq.failures)+' / '+fmt(aq.dropped)],
+                ['APRS 最早 / 最新待发时间',date(aq.oldest)+' / '+date(aq.newest)],
+                ['APRS 最后写入连接',date(aq.last_success)],
+                ['APRS 最近报文',a.last_packet || '—'],
                 ['设备温度',live && s.device_temp != null ? s.device_temp.toFixed(1)+' °C（'+fmt(s.device_temp_source)+'）' : '不可用'],
                 ['数据盘可用空间',((s.free_bytes||0)/1048576).toFixed(1)+' MiB'],['版本',s.version]
             ];
@@ -195,6 +220,8 @@ events.push(function() {
             const warnings=[];
             if (s.storage_error) warnings.push(s.storage_error);
             if (q.dropped) warnings.push('缓存达到上限，累计淘汰最旧未上传点 '+q.dropped+' 个。');
+            if (aq.dropped) warnings.push('APRS 缓存达到上限，累计淘汰 '+aq.dropped+' 个点。');
+            if (a.last_error) warnings.push('APRS: '+a.last_error);
             if (!live) warnings.push('服务未运行或状态已过期。');
             const alert=document.getElementById('tracker-alert'); alert.textContent=warnings.join(' '); alert.style.display=warnings.length ? '' : 'none';
             TrackerSatellites.render(g.satellites || [], live);

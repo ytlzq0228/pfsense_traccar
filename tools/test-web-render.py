@@ -38,14 +38,29 @@ class Navigation(HTMLParser):
 
 
 helper = Path(__file__).with_name('render-web-test.php')
-for view in ('settings', 'status'):
+for view in ('system', 'traccar', 'aprs', 'status'):
     html = subprocess.check_output(['php', str(helper), view], text=True)
     assert 'PHP ERROR' not in html and '</html>' in html, view
     parser = Navigation()
     parser.feed(html)
     links = {label.strip(): (href, active) for href, label, active in parser.links}
-    assert links.get('配置') == ('services_traccar.php', view == 'settings'), links
+    assert links.get('系统配置') == ('services_traccar.php', view == 'system'), links
+    assert links.get('Traccar 配置') == ('services_traccar.php?tab=traccar', view == 'traccar'), links
+    assert links.get('APRS 配置') == ('services_traccar.php?tab=aprs', view == 'aprs'), links
     assert links.get('状态与日志') == ('services_traccar.php?tab=status', view == 'status'), links
+    assert 'href="https://github.com/ytlzq0228/pfsense_traccar"' in html
+    if view != 'status':
+        assert 'action="services_traccar.php?tab=' + view + '"' in html, view
+        expected = {'system': 'queue_dir', 'traccar': 'device_id', 'aprs': 'aprs_callsign'}
+        for section, field in expected.items():
+            assert ('name="' + field + '"' in html) == (section == view), (view, field)
+        if view == 'aprs':
+            assert 'id="aprs-symbol-picker"' in html and 'id="aprs-symbol-grid"' in html
+            assert '/traccar-symbols/picker.js?v=0.2.1' in html
+            assert '/traccar-symbols/picker.css?v=0.2.1' in html
+            import re
+            password = re.search(r'<input[^>]+name="aprs_passcode"[^>]*>', html).group()
+            assert not re.search(r'value="[^"]+"', password), 'Password must not be rendered'
     if view == 'status':
         assert 'id="tracker-status"' in html and 'id="tracker-sats"' in html
         assert 'id="satellite-bars"' in html and 'id="satellite-sky"' in html

@@ -1,0 +1,23 @@
+<link rel="stylesheet" href="/traccar-symbols/picker.css?v=0.2.1">
+<div id="aprs-symbol-picker">
+  <div class="aprs-selection">
+    <div id="aprs-symbol-preview" aria-hidden="true"></div>
+    <div><strong>当前图标</strong><div id="aprs-symbol-current" role="status" aria-live="polite">正在加载图标…</div></div>
+  </div>
+  <p class="help-block">点击下方图标自动填写上面的两个值，保存并应用后生效。手动修改编码也可同步预览。</p>
+  <details id="aprs-symbol-catalog" open>
+    <summary>图标预览表</summary>
+    <div class="aprs-picker-controls">
+      <label for="aprs-symbol-table-choice">图标表 / 覆盖字符<select id="aprs-symbol-table-choice" class="form-control"></select></label>
+      <label for="aprs-symbol-search">搜索图标<input id="aprs-symbol-search" type="search" class="form-control" placeholder="名称或代码，如 汽车、Car、&gt;"></label>
+    </div>
+    <p id="aprs-symbol-count" class="help-block" aria-live="polite"></p>
+    <div id="aprs-symbol-grid" role="group" aria-label="选择 APRS 图标"></div>
+    <p class="help-block">覆盖字符显示在备用图标上。预览采用 aprs.fi 图库，不同接收软件的外观可能略有差异；空白或未定义项不提供选择。</p>
+  </details>
+  <small class="text-muted">图标：<a href="https://github.com/hessu/aprs-symbols" target="_blank" rel="noopener">OH7LZB / aprs.fi</a> ·
+    <a href="/traccar-symbols/COPYRIGHT.md" target="_blank" rel="noopener">图标版权</a> ·
+    <a href="/traccar-symbols/index-README.md" target="_blank" rel="noopener">名称索引（CC BY-SA 4.0）</a></small>
+  <noscript><p>请启用 JavaScript 使用图标选择器；也可直接填写图标表和代码。</p></noscript>
+</div>
+<script src="/traccar-symbols/picker.js?v=0.2.1"></script>

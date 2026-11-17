@@ -5,7 +5,11 @@ import re
 from urllib.parse import urlsplit
 
 DEFAULTS = dict(enabled=False, source='ch340', usb_selector='', baud=115200,
-                serial_path='/dev/cuaU0', server_url='', device_id='',
+                serial_path='/dev/cuaU0', server_url='', device_id='', traccar_enabled=True,
+                aprs_enabled=False, aprs_host='china.aprs2.net', aprs_port=14580,
+                aprs_callsign='', aprs_passcode='', aprs_symbol_table='/', aprs_symbol='>',
+                aprs_comment='', aprs_moving_interval=30, aprs_stopped_interval=300,
+                aprs_timeout=5, aprs_upload_interval=5,
                 moving_interval=1, stopped_interval=120, speed_threshold=3,
                 speed_hysteresis=1, move_delay=3, stop_delay=15,
                 fix_timeout=5, min_sat=4, max_hdop=5,
@@ -16,8 +20,10 @@ RANGES = dict(baud=(4800,230400), moving_interval=(1,3600), stopped_interval=(1,
               speed_threshold=(0.1,200), speed_hysteresis=(0,50), move_delay=(0,120), stop_delay=(0,600),
               fix_timeout=(2,60), min_sat=(0,64), max_hdop=(0.5,99), max_points=(10,1000000),
               queue_mb=(1,4096), reserve_mb=(16,4096), http_timeout=(1,30), upload_rate=(1,50),
-              log_mb=(1,20), log_backups=(1,10))
-INTEGERS = {'baud','min_sat','max_points','queue_mb','reserve_mb','log_mb','log_backups'}
+              log_mb=(1,20), log_backups=(1,10), aprs_port=(1,65535),
+              aprs_moving_interval=(30,3600), aprs_stopped_interval=(30,86400),
+              aprs_timeout=(1,30), aprs_upload_interval=(5,300))
+INTEGERS = {'baud','min_sat','max_points','queue_mb','reserve_mb','log_mb','log_backups','aprs_port'}
 
 
 def validate(data):
@@ -25,7 +31,7 @@ def validate(data):
     unknown = set(data)-set(DEFAULTS)
     if unknown:
         raise ValueError('Unknown settings: ' + ', '.join(sorted(unknown)))
-    for key in ('enabled','log_positions','log_nmea'):
+    for key in ('enabled','traccar_enabled','aprs_enabled','log_positions','log_nmea'):
         if type(config[key]) is not bool:
             raise ValueError(key + ' must be boolean')
     for key, (low, high) in RANGES.items():
@@ -56,8 +62,25 @@ def validate(data):
             raise ValueError('Invalid server URL')
     if config['device_id'] and not re.fullmatch(r'[A-Za-z0-9_.:@-]{1,128}', config['device_id']):
         raise ValueError('Invalid device ID')
-    if config['enabled'] and (not config['device_id'] or not config['server_url']):
+    if config['enabled'] and config['traccar_enabled'] and (not config['device_id'] or not config['server_url']):
         raise ValueError('Server URL and device ID are required when enabled')
+    if not isinstance(config['aprs_host'], str) or not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?', config['aprs_host']):
+        raise ValueError('APRS host must be a hostname or IPv4 address without port')
+    call = config['aprs_callsign']
+    if not isinstance(call, str) or (call and (len(call) > 9 or not re.fullmatch(r'[A-Z0-9]{3,6}(?:-(?!0$)[A-Z0-9]{1,2})?', call))):
+        raise ValueError('APRS callsign must be uppercase, optionally followed by SSID; maximum 9 characters')
+    password = config['aprs_passcode']
+    if not isinstance(password, str) or (password and (not re.fullmatch(r'[0-9]{1,5}', password) or int(password) > 32767)):
+        raise ValueError('APRS passcode must be an integer from 0 to 32767')
+    if not isinstance(config['aprs_symbol_table'], str) or not re.fullmatch(r'[/\\0-9A-Z]', config['aprs_symbol_table']):
+        raise ValueError('APRS symbol table must be /, backslash, or an overlay 0-9/A-Z')
+    if not isinstance(config['aprs_symbol'], str) or not re.fullmatch(r'[!-~]', config['aprs_symbol']):
+        raise ValueError('APRS symbol must be one printable ASCII character')
+    comment = config['aprs_comment']
+    if not isinstance(comment, str) or len(comment.encode('utf-8')) > 160 or any(not ch.isprintable() for ch in comment):
+        raise ValueError('APRS comment must be printable text, up to 160 UTF-8 bytes, without line breaks')
+    if config['aprs_enabled'] and (not call or not password):
+        raise ValueError('APRS callsign and passcode are required when APRS is enabled')
     return config
 
 

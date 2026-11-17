@@ -26,7 +26,14 @@ $_POST=[];
 if ($mode === 'status-json') { $_GET=['action'=>'status']; }
 if ($mode === 'invalid-save' || $mode === 'save-current') {
     require_once('/usr/local/pkg/traccar.inc');
-    foreach (traccar_config() as $key=>$value) {
+    $view = $argv[2] ?? ($mode === 'invalid-save' ? 'traccar' : 'system');
+    $_GET = ['tab' => $view];
+    $current = traccar_config();
+    $editable = [];
+    foreach (traccar_fields($view) as $section) { $editable = array_merge($editable, $section); }
+    foreach ($editable as $key=>$spec) {
+        $value = $current[$key];
+        if ($key === 'aprs_passcode') { $_POST[$key]=''; continue; }
         if (is_bool($value)) { if ($value) { $_POST[$key]='yes'; } }
         else { $_POST[$key]=(string)$value; }
     }
