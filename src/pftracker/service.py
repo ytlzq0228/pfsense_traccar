@@ -9,6 +9,7 @@ from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
 import random
+import queue
 import select
 import shutil
 import signal
@@ -29,11 +30,13 @@ from .queue import Outbox
 from .usb import CH340
 from .temperature import read_temperature
 from .aprs import Sender as APRSSender, make_item as make_aprs_item
+from .rtcm import MixedStream, sentence
+from .rtk import RTK
 
 
 class Serial:
     def __init__(self, path, baud):
-        self.fd = os.open(path, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+        self.fd = os.open(path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
         try:
             tty.setraw(self.fd)
             a = termios.tcgetattr(self.fd)
@@ -55,6 +58,49 @@ class Serial:
 
     def close(self):
         os.close(self.fd)
+
+    def write(self, data):
+        if os.write(self.fd,data) != len(data):
+            raise OSError('Incomplete GNSS command write')
+
+
+class BufferedSource:
+    """Continuously drain UART bursts while the consumer parses or syncs SQLite."""
+    def __init__(self, source):
+        # CH340 has a small UART FIFO; a CPU-bound parser must not hold the
+        # interpreter for the default 5 ms while the USB reader waits for it.
+        sys.setswitchinterval(min(sys.getswitchinterval(),0.0005))
+        self.source=source
+        self.name=getattr(source,'name','serial')
+        self.pending=queue.Queue(1024)
+        self.stop=threading.Event()
+        self.error=None
+        self.worker=threading.Thread(target=self.run,daemon=True)
+        self.worker.start()
+
+    def run(self):
+        try:
+            while not self.stop.is_set():
+                data=self.source.read()
+                if data:
+                    try:self.pending.put_nowait((time.monotonic(),data))
+                    except queue.Full:raise OSError('GNSS receive buffer overflow') from None
+        except (OSError,ValueError) as error:
+            self.error=error
+
+    def read(self):
+        if self.error:raise self.error
+        try:at,data=self.pending.get(timeout=.1)
+        except queue.Empty:return b''
+        if time.monotonic()-at>1:
+            raise OSError('GNSS receive buffer is stale')
+        return data
+
+    def close(self):
+        self.stop.set()
+        self.worker.join(timeout=2)
+        if self.worker.is_alive():raise OSError('GNSS reader did not stop')
+        self.source.close()
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -83,8 +129,17 @@ def post(item, timeout):
 
 def make_payload(fix, config, moving, device_temp=None):
     p = dict(id=config['device_id'], timestamp=fix['epoch'], lat=round(fix['lat'],7),
-             lon=round(fix['lon'],7), valid='true', sat=fix['sat'], hdop=fix['hdop'],
+             lon=round(fix['lon'],7), valid='true', sat=fix['sat'],
              motion='true' if moving else 'false', fixQuality=fix['quality'])
+    if fix.get('hdop') is not None:
+        p['hdop']=fix['hdop']
+    if fix.get('accuracy') is not None:
+        p['accuracy']=round(fix['accuracy'],3)
+    if 'rtk_age' in fix:
+        p.update(positionSource='rtk_fix' if fix['quality']==4 else 'rtk_float',
+                 rtkAge=fix['rtk_age'], rtkRatio=fix['rtk_ratio'])
+    else:
+        p['positionSource']='gga'
     if device_temp is not None and math.isfinite(device_temp) and -40 <= device_temp <= 150:
         p['deviceTemp'] = round(device_temp, 1)
     for key in ('speed','bearing','altitude'):
@@ -136,6 +191,7 @@ class Service:
         self.aprs = APRSSender(config, self.aprs_outbox, self.stop, self.log)
         self.aprs_worker = threading.Thread(target=self.aprs.run, daemon=True)
         self.storage_errors = {}
+        self.rtk = RTK(config,self.stop) if config['rtk_enabled'] else None
 
     def update_temperature(self):
         # Hardware reads never block the USB acquisition or HTTP sender.
@@ -216,6 +272,7 @@ class Service:
 
     def run(self):
         parser, sampler, source = NMEA(), Sampler(self.c), None
+        framing, latest_gga = MixedStream(), None
         aprs_sampler = Sampler({**self.c, 'moving_interval': self.c['aprs_moving_interval'],
                                 'stopped_interval': self.c['aprs_stopped_interval']})
         reconnect_at, last_state, next_status, last_valid_data = 0, None, 0, 0
@@ -224,6 +281,8 @@ class Service:
         self.temperature_worker.start()
         self.sent_worker.start()
         self.aprs_worker.start()
+        if self.rtk:
+            self.rtk.start()
         try:
             while not self.stop.is_set():
                 now = time.monotonic()
@@ -232,11 +291,24 @@ class Service:
                         source = CH340(self.c['baud'], self.c['usb_selector']) if self.c['source'] == 'ch340' else Serial(self.c['serial_path'], self.c['baud'])
                         # Invalidate ALL epochs from the old connection.
                         parser = NMEA()
+                        framing, latest_gga = MixedStream(), None
                         sampler.was_valid = aprs_sampler.was_valid = False
                         last_valid_data = now
                         self.log.info('GPS opened: %s', getattr(source, 'name', self.c['serial_path']))
+                        if self.c['msm_enabled']:
+                            source.write(sentence('PAIR432,'+('1' if self.c['msm_mode']=='msm7' else '0')))
+                            source.write(sentence('PAIR436,1'))
+                        source=BufferedSource(source)
                     if source is not None:
-                        lines = parser.feed(source.read(), time.monotonic())
+                        lines=[]
+                        for kind,message in framing.feed(source.read()):
+                            if kind=='rtcm':
+                                if self.rtk: self.rtk.feed_rover(message)
+                            else:
+                                parsed=parser.feed(message,time.monotonic())
+                                lines.extend(parsed)
+                                for line in parsed:
+                                    if line[3:6]=='GGA': latest_gga=line
                         if lines:
                             last_valid_data, backoff = time.monotonic(), 1
                             if self.raw:
@@ -251,11 +323,18 @@ class Service:
                         source.close()
                         source = None
                     parser.valid, parser.reason = False, str(e)
+                    latest_gga = None
+                    if self.rtk: self.rtk.receiver_lost()
                     reconnect_at = time.monotonic()+backoff
                     self.log.warning('GPS unavailable: %s; retry in %ss', e, backoff)
                     backoff = min(30, backoff*2)
                 now = time.monotonic()
                 gps = parser.snapshot(now, self.c['fix_timeout'], self.c['max_hdop'], self.c['min_sat'])
+                if self.rtk:
+                    self.rtk.ntrip.set_gga(latest_gga if gps['valid'] else None)
+                    gps=self.rtk.select(gps)
+                else:
+                    gps.update(source='gga',rtk_used=False)
                 state = (gps['valid'], gps['reason'])
                 if state != last_state:
                     self.log.info('GPS state: %s', gps['reason'])
@@ -273,6 +352,7 @@ class Service:
                     state = dict(device_temp=device_temp, device_temp_source=temp_source, version=__version__, pid=os.getpid(), updated=time.time(), started=self.started,
                                  gps=gps, moving=sampler.moving, queue=self.outbox.stats(), network=network,
                                  aprs={**self.aprs.snapshot(), 'queue': self.aprs_outbox.stats()},
+                                 rtcm=framing.snapshot(now), rtk=self.rtk.snapshot() if self.rtk else {'state':'disabled'},
                                  storage_error=self.storage_error, free_bytes=shutil.disk_usage(self.directory).free,
                                  source=self.c['source'], device=getattr(source, 'name', self.c['serial_path']) if source else None)
                     atomic_json(self.status, state)
@@ -281,6 +361,8 @@ class Service:
             self.stop.set()
             if source:
                 source.close()
+            if self.rtk:
+                self.rtk.close()
             self.temperature_worker.join(timeout=1)
             self.sent_worker.join(timeout=self.c['http_timeout']+2)
             self.aprs_worker.join(timeout=self.c['aprs_timeout']+2)

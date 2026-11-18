@@ -2,5 +2,5 @@
 <pfsensepkgs><package>
 <name>Traccar</name><internal_name>Traccar</internal_name>
 <descr>USB GNSS tracking with durable offline queue and native pfSense management.</descr>
-<version>0.2.1</version><configurationfile>traccar.xml</configurationfile>
+<version>0.3.0</version><configurationfile>traccar.xml</configurationfile>
 </package></pfsensepkgs>

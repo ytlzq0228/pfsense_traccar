@@ -129,6 +129,27 @@ function traccar_fields($tab = 'system') {
             ],
         ];
     }
+    if ($tab === 'rtk') {
+        return [
+            'LC76G 原始观测' => [
+                'msm_enabled' => ['开启 MSM 与星历','checkbox','唯一采集进程发送LC76G PAIR指令，开启本机观测及广播星历。'],
+                'msm_mode' => ['MSM 格式','select','推荐MSM7；同一串口的NMEA与RTCM由服务拆分。',['msm7'=>'MSM7','msm4'=>'MSM4']],
+            ],
+            '软件 RTK 与 NTRIP' => [
+                'rtk_enabled' => ['启用软件 RTK','checkbox','使用随包RTKLIB单频动态解算；需开启MSM并填写差分账户。'],
+                'ntrip_host' => ['Caster 主机','text','只填域名或IPv4地址，不含协议和端口。'],
+                'ntrip_port' => ['Caster 端口','number','以账户服务参数为准；坐标框架由Caster决定，本程序不进行历元转换。'],
+                'ntrip_mountpoint' => ['挂载点','select','连接失败或持续无有效RTCM时尝试另一个挂载点。',['AUTO'=>'AUTO','RTCM32_GGB'=>'RTCM32_GGB']],
+                'ntrip_username' => ['NTRIP 用户名','text','仅用于指定Caster登录，不写入队列或状态。'],
+                'ntrip_password' => ['NTRIP 密码','password','留空保留已保存密码；不回显、不写入日志。'],
+            ],
+            '解算质量与回退' => [
+                'rtk_allow_float' => ['接受 RTK FLOAT','checkbox','FLOAT尚未固定模糊度，仍须通过不确定度和时效检查。关闭后只采用FIX。'],
+                'rtk_max_age' => ['最大差分年龄（秒）','number','默认10；断连、超龄、解算或原始观测过期时自动回退GGA。'],
+                'rtk_max_sigma' => ['最大水平标准差（米）','number','默认3；垂直标准差不得超过两倍。FIX还要求ratio≥3、至少4颗卫星。'],
+            ],
+        ];
+    }
     unset($fields['基本设置']['server_url'], $fields['基本设置']['device_id'],
           $fields['定位与采样']['moving_interval'], $fields['定位与采样']['stopped_interval'],
           $fields['缓存与网络']['http_timeout'], $fields['缓存与网络']['upload_rate']);

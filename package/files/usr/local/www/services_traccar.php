@@ -10,7 +10,7 @@ require_once('/usr/local/pkg/traccar.inc');
 require_once('classes/Form.class.php');
 
 $tab = $_GET['tab'] ?? 'system';
-if (!in_array($tab, ['system','traccar','aprs','status'], true)) { $tab = 'system'; }
+if (!in_array($tab, ['system','traccar','aprs','rtk','status'], true)) { $tab = 'system'; }
 $settings = traccar_config();
 if (($_GET['action'] ?? '') === 'status') {
     header('Content-Type: application/json; charset=utf-8');
@@ -47,12 +47,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             elseif (is_int($default) || is_float($default)) {
                 $raw = trim((string)($_POST[$key] ?? ''));
                 if (!is_numeric($raw)) { $input_errors[] = "$key: 必须填写数字"; continue; }
-                $integer_fields = ['baud','min_sat','max_points','queue_mb','reserve_mb','log_mb','log_backups','aprs_port'];
+                $integer_fields = ['baud','min_sat','max_points','queue_mb','reserve_mb','log_mb','log_backups','aprs_port','ntrip_port'];
                 if (in_array($key,$integer_fields,true) && (float)$raw != (int)$raw) { $input_errors[] = "$key: 必须填写整数"; }
                 $candidate[$key] = in_array($key,$integer_fields,true) ? (int)$raw : (float)$raw;
             } else {
                 $value = trim((string)($_POST[$key] ?? ''));
-                if ($key !== 'aprs_passcode' || $value !== '') { $candidate[$key] = $value; }
+                if (!in_array($key,['aprs_passcode','ntrip_password'],true) || $value !== '') { $candidate[$key] = $value; }
             }
         }
         if (!$input_errors) {
@@ -87,6 +87,7 @@ if (isset($savemsg)) { print_info_box(htmlspecialchars($savemsg), 'success'); }
 $tabs = [['系统配置',$tab==='system','services_traccar.php'],
          ['Traccar 配置',$tab==='traccar','services_traccar.php?tab=traccar'],
          ['APRS 配置',$tab==='aprs','services_traccar.php?tab=aprs'],
+         ['RTK 与 MSM',$tab==='rtk','services_traccar.php?tab=rtk'],
          ['状态与日志',$tab==='status','services_traccar.php?tab=status']];
 display_top_tabs($tabs);
 if ($tab !== 'status') {
@@ -191,6 +192,7 @@ events.push(function() {
             const live = s.running && !s.stale;
             document.getElementById('refresh-state').textContent = '更新于 ' + date(s.updated);
             const body = document.getElementById('tracker-status'); body.replaceChildren();
+            const r=s.rtk||{}, nr=r.ntrip||{}, rs=r.solution||{}, ms=s.rtcm||{};
             const values = [
                 ['服务', s.running ? (s.stale ? '进程运行，状态已过期' : '运行中') : '已停止'],
                 ['GPS',live ? g.reason : '当前不可用（下方为最后状态）'],['读取设备',s.device],
@@ -202,6 +204,18 @@ events.push(function() {
                 ['高度（m） / 航向（°）',fmt(f.altitude)+' / '+fmt(f.bearing)],
                 ['参与定位卫星 / HDOP',fmt(f.sat)+' / '+fmt(f.hdop)],
                 ['NMEA 有效 / 错误语句',fmt(g.valid_lines)+' / '+fmt(g.bad_lines)],
+                ['当前定位来源',g.source || 'gga'],['RTK 回退原因',g.fallback_reason || '无'],
+                ['RTK 解算状态',r.state || 'disabled'],['RTK 最近错误',r.last_error || '无'],
+                ['RTK FIX/FLOAT / 卫星',fmt(rs.status)+' / '+fmt(rs.sat)],
+                ['解算年龄 / 差分年龄（秒）',fmt(r.solution_age)+' / '+fmt(nr.correction_age)],
+                ['解算差分龄期 / ratio',fmt(rs.age)+' / '+fmt(rs.ratio)],
+                ['RTK 水平 / 垂直标准差（米）',fmt(rs.sigma_horizontal)+' / '+fmt(rs.sigma_up)],
+                ['NTRIP 状态 / 挂载点',fmt(nr.state)+' / '+fmt(nr.mountpoint)],
+                ['NTRIP 最近错误',nr.last_error || '无'],
+                ['差分字节 / RTCM帧',fmt(nr.bytes)+' / '+fmt(nr.valid_frames)],
+                ['本机 RTCM帧 / CRC错误',fmt(ms.valid_frames)+' / '+fmt(ms.bad_crc)],
+                ['本机 RTCM 消息统计',Object.entries(ms.types||{}).map(([id,v])=>id+': '+v.count+(v.satellites == null ? '' : ' ('+v.satellites+'颗)')).join('；') || '等待'],
+                ['坐标框架',r.datum || 'WGS84'],
                 ['Traccar 上传状态',fmt(n.state)+' · HTTP '+fmt(n.last_http)],['最近上传错误',n.last_error || '无'],
                 ['待传点数 / 数据预算占用',fmt(q.count)+' / '+((q.payload_bytes||0)/1048576).toFixed(2)+' MiB'],
                 ['最早 / 最新待传时间',date(q.oldest)+' / '+date(q.newest)],

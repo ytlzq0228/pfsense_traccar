@@ -111,7 +111,8 @@ class NMEA:
                 return
             self.gga = dict(t=tod(f[1]), at=now, quality=quality, sat=int(f[7] or '0'),
                             hdop=number(f[8]) if f[8] else None,
-                            altitude=number(f[9]) if f[9] and f[10] == 'M' else None)
+                            altitude=number(f[9]) if f[9] and f[10] == 'M' else None,
+                            geoid_separation=number(f[11]) if len(f)>12 and f[11] and f[12]=='M' else None)
             self.assemble(now)
         elif kind == 'GSA':
             self.fix_mode, self.mode_at = int(f[2]), now
@@ -153,7 +154,7 @@ class NMEA:
             return
         if self.fix and r['epoch'] <= self.fix['epoch']:
             return
-        self.fix = {**r, **{k: g[k] for k in ('quality', 'sat', 'hdop', 'altitude')}}
+        self.fix = {**r, **{k: g[k] for k in ('quality', 'sat', 'hdop', 'altitude', 'geoid_separation')}}
         self.last_fix, self.valid, self.reason = now, True, 'valid fix'
 
     def snapshot(self, now, stale=5, max_hdop=5, min_sat=4):
@@ -216,7 +217,7 @@ class Sampler:
         interval = self.config['moving_interval'] if self.moving or kmh is None else self.config['stopped_interval']
         due = not self.was_valid or changed or self.last_sample is None or now-self.last_sample >= interval
         self.was_valid = True
-        if due and fix['epoch'] != self.last_epoch:
+        if due and (self.last_epoch is None or fix['epoch'] > self.last_epoch):
             self.last_sample, self.last_epoch = now, fix['epoch']
             return fix
         return None

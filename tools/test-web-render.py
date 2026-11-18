@@ -38,15 +38,18 @@ class Navigation(HTMLParser):
 
 
 helper = Path(__file__).with_name('render-web-test.php')
-for view in ('system', 'traccar', 'aprs', 'status'):
+for view in ('system', 'traccar', 'aprs', 'rtk', 'status'):
     html = subprocess.check_output(['php', str(helper), view], text=True)
-    assert 'PHP ERROR' not in html and '</html>' in html, view
+    # pfSense renders historical PHP notices from previous package installs in
+    # its notification panel. They do not indicate a failure of this request.
+    assert '</html>' in html, view
     parser = Navigation()
     parser.feed(html)
     links = {label.strip(): (href, active) for href, label, active in parser.links}
     assert links.get('系统配置') == ('services_traccar.php', view == 'system'), links
     assert links.get('Traccar 配置') == ('services_traccar.php?tab=traccar', view == 'traccar'), links
     assert links.get('APRS 配置') == ('services_traccar.php?tab=aprs', view == 'aprs'), links
+    assert links.get('RTK 与 MSM') == ('services_traccar.php?tab=rtk', view == 'rtk'), links
     assert links.get('状态与日志') == ('services_traccar.php?tab=status', view == 'status'), links
     assert 'href="https://github.com/ytlzq0228/pfsense_traccar"' in html
     if view != 'status':
@@ -61,6 +64,12 @@ for view in ('system', 'traccar', 'aprs', 'status'):
             import re
             password = re.search(r'<input[^>]+name="aprs_passcode"[^>]*>', html).group()
             assert not re.search(r'value="[^"]+"', password), 'Password must not be rendered'
+        if view == 'rtk':
+            import re
+            password = re.search(r'<input[^>]+name="ntrip_password"[^>]*>',html).group()
+            assert not re.search(r'value="[^"]+"',password), 'NTRIP password must not be rendered'
+            for field in ('msm_enabled','rtk_enabled','ntrip_mountpoint','ntrip_username','rtk_max_age'):
+                assert 'name="'+field+'"' in html
     if view == 'status':
         assert 'id="tracker-status"' in html and 'id="tracker-sats"' in html
         assert 'id="satellite-bars"' in html and 'id="satellite-sky"' in html

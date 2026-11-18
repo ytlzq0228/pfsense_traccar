@@ -1,7 +1,7 @@
 """CH340 userspace receiver using FreeBSD's base-system libusb (no PyUSB).
 
 Register meanings: FreeBSD sys/dev/usb/serial/uchcom.c; CH340 clock is 48 MHz.
-Only the USB UART is configured; no configuration commands are sent to the GNSS.
+GNSS commands are sent only by the explicit MSM setting / maintenance command.
 """
 import ctypes as C
 import ctypes.util
@@ -69,14 +69,15 @@ class CH340:
             self.claimed = True
             # Read descriptors through endpoint zero; select a bulk IN endpoint.
             cfg = self.control(0x80, 6, 0x0200, 0, 256)
-            self.endpoint = None
+            self.endpoint = self.out_endpoint = None
             offset = 0
             while offset + 2 <= len(cfg) and cfg[offset] >= 2:
                 size, kind = cfg[offset:offset+2]
                 if kind == 5 and size >= 7 and cfg[offset+2] & 0x80 and cfg[offset+3] & 3 == 2:
                     self.endpoint = cfg[offset+2]
                     self.packet_size = int.from_bytes(cfg[offset+4:offset+6], 'little')
-                    break
+                elif kind == 5 and size >= 7 and not cfg[offset+2] & 0x80 and cfg[offset+3] & 3 == 2:
+                    self.out_endpoint = cfg[offset+2]
                 offset += size
             if self.endpoint is None:
                 raise OSError('No bulk IN endpoint')
@@ -111,6 +112,14 @@ class CH340:
         if rc != -7:  # timeout can still contain a partial transfer
             self.check(rc)
         return buf.raw[:n.value]
+
+    def write(self, data):
+        if self.out_endpoint is None:
+            raise OSError('No USB bulk OUT endpoint')
+        buf, n = C.create_string_buffer(data), C.c_int()
+        self.check(self.lib.libusb_bulk_transfer(self.handle, self.out_endpoint, buf, len(data), C.byref(n), 3000))
+        if n.value != len(data):
+            raise OSError('Incomplete GNSS command write')
 
     def close(self):
         if self.handle:

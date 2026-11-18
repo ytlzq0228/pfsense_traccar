@@ -33,7 +33,7 @@ if ($mode === 'invalid-save' || $mode === 'save-current') {
     foreach (traccar_fields($view) as $section) { $editable = array_merge($editable, $section); }
     foreach ($editable as $key=>$spec) {
         $value = $current[$key];
-        if ($key === 'aprs_passcode') { $_POST[$key]=''; continue; }
+        if (in_array($key,['aprs_passcode','ntrip_password'],true)) { $_POST[$key]=''; continue; }
         if (is_bool($value)) { if ($value) { $_POST[$key]='yes'; } }
         else { $_POST[$key]=(string)$value; }
     }

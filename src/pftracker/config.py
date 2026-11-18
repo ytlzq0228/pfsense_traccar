@@ -4,7 +4,7 @@ import os
 import re
 from urllib.parse import urlsplit
 
-DEFAULTS = dict(enabled=False, source='ch340', usb_selector='', baud=115200,
+DEFAULTS = dict(enabled=False, source='ch340', usb_selector='', baud=230400,
                 serial_path='/dev/cuaU0', server_url='', device_id='', traccar_enabled=True,
                 aprs_enabled=False, aprs_host='china.aprs2.net', aprs_port=14580,
                 aprs_callsign='', aprs_passcode='', aprs_symbol_table='/', aprs_symbol='>',
@@ -15,15 +15,20 @@ DEFAULTS = dict(enabled=False, source='ch340', usb_selector='', baud=115200,
                 fix_timeout=5, min_sat=4, max_hdop=5,
                 queue_dir='/conf/traccar', max_points=100000, queue_mb=128,
                 reserve_mb=64, http_timeout=3, upload_rate=5,
-                log_mb=2, log_backups=3, log_positions=True, log_nmea=False)
+                log_mb=2, log_backups=3, log_positions=True, log_nmea=False,
+                msm_enabled=False, msm_mode='msm7', rtk_enabled=False,
+                ntrip_host='rtk.ntrip.qxwz.com', ntrip_port=8002, ntrip_mountpoint='AUTO',
+                ntrip_username='', ntrip_password='', rtk_allow_float=True,
+                rtk_max_age=10, rtk_max_sigma=3)
 RANGES = dict(baud=(4800,230400), moving_interval=(1,3600), stopped_interval=(1,86400),
               speed_threshold=(0.1,200), speed_hysteresis=(0,50), move_delay=(0,120), stop_delay=(0,600),
               fix_timeout=(2,60), min_sat=(0,64), max_hdop=(0.5,99), max_points=(10,1000000),
               queue_mb=(1,4096), reserve_mb=(16,4096), http_timeout=(1,30), upload_rate=(1,50),
               log_mb=(1,20), log_backups=(1,10), aprs_port=(1,65535),
               aprs_moving_interval=(30,3600), aprs_stopped_interval=(30,86400),
-              aprs_timeout=(1,30), aprs_upload_interval=(5,300))
-INTEGERS = {'baud','min_sat','max_points','queue_mb','reserve_mb','log_mb','log_backups','aprs_port'}
+              aprs_timeout=(1,30), aprs_upload_interval=(5,300), ntrip_port=(1,65535),
+              rtk_max_age=(1,60), rtk_max_sigma=(0.01,50))
+INTEGERS = {'baud','min_sat','max_points','queue_mb','reserve_mb','log_mb','log_backups','aprs_port','ntrip_port'}
 
 
 def validate(data):
@@ -31,7 +36,8 @@ def validate(data):
     unknown = set(data)-set(DEFAULTS)
     if unknown:
         raise ValueError('Unknown settings: ' + ', '.join(sorted(unknown)))
-    for key in ('enabled','traccar_enabled','aprs_enabled','log_positions','log_nmea'):
+    for key in ('enabled','traccar_enabled','aprs_enabled','log_positions','log_nmea',
+                'msm_enabled','rtk_enabled','rtk_allow_float'):
         if type(config[key]) is not bool:
             raise ValueError(key + ' must be boolean')
     for key, (low, high) in RANGES.items():
@@ -81,6 +87,20 @@ def validate(data):
         raise ValueError('APRS comment must be printable text, up to 160 UTF-8 bytes, without line breaks')
     if config['aprs_enabled'] and (not call or not password):
         raise ValueError('APRS callsign and passcode are required when APRS is enabled')
+    if config['msm_mode'] not in ('msm4','msm7'):
+        raise ValueError('MSM mode must be msm4 or msm7')
+    if not isinstance(config['ntrip_host'], str) or not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?', config['ntrip_host']):
+        raise ValueError('NTRIP host must be a hostname or IPv4 address without port')
+    if not isinstance(config['ntrip_mountpoint'],str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}',config['ntrip_mountpoint']):
+        raise ValueError('Invalid NTRIP mountpoint')
+    for key in ('ntrip_username','ntrip_password'):
+        value=config[key]
+        if not isinstance(value,str) or len(value.encode('utf8'))>128 or any(ord(ch)<32 or ord(ch)==127 for ch in value):
+            raise ValueError('Invalid '+key)
+    if ':' in config['ntrip_username']:
+        raise ValueError('NTRIP username must not contain colon')
+    if config['rtk_enabled'] and (not config['msm_enabled'] or not config['ntrip_username'] or not config['ntrip_password']):
+        raise ValueError('RTK requires MSM output and NTRIP credentials')
     return config
 
 
