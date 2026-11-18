@@ -53,6 +53,13 @@ function traccar_status() {
     $s = json_decode(@file_get_contents('/var/run/traccar-status.json'), true) ?: [];
     $s['running'] = traccar_running();
     $s['stale'] = empty($s['updated']) || time() - $s['updated'] > 10;
+    $c = traccar_config();
+    $s['rtk']['limits'] = [
+        'solution_age' => $c['fix_timeout'], 'correction_age' => $c['rtk_max_age'],
+        'sigma_horizontal' => $c['rtk_max_sigma'], 'sigma_up' => $c['rtk_max_sigma'] * 2,
+        'satellites' => max(4, $c['min_sat']), 'ratio' => 3,
+        'allow_float' => $c['rtk_allow_float'],
+    ];
     return $s;
 }
 function traccar_fields($tab = 'system') {

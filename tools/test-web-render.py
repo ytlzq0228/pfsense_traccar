@@ -74,8 +74,16 @@ for view in ('system', 'traccar', 'aprs', 'rtk', 'status'):
         assert 'id="tracker-status"' in html and 'id="tracker-sats"' in html
         assert 'id="satellite-bars"' in html and 'id="satellite-sky"' in html
         assert '/js/traccar-satellites.js?v=0.1.2' in html
+        assert 'id="rtk-quality"' in html and 'id="rtk-history"' in html
+        assert '/js/traccar-rtk.js?v=0.3.2' in html and '/traccar-rtk.css?v=0.3.2' in html
+        for metric in ('sigma','vertical','ratio','correction','satellites','solution'):
+            assert 'id="rtk-'+metric+'-value"' in html
+        for detail in ('RTK 最近错误','RTK FIX/FLOAT / 卫星','本机 RTCM 消息统计','APRS 最近报文'):
+            assert detail in html, 'Existing detailed information must remain'
     print('PASS tab destinations, active state and rendered content:', view)
 status = json.loads(subprocess.check_output(['php', str(helper), 'status-json'], text=True))
 assert isinstance(status['running'], bool)
 assert 'gps' in status and 'queue' in status
+assert status['rtk']['limits']['ratio']==3
+assert status['rtk']['limits']['sigma_up']==2*status['rtk']['limits']['sigma_horizontal']
 print('PASS status endpoint returns clean JSON')

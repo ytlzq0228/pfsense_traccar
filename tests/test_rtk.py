@@ -114,6 +114,7 @@ class FallbackTests(unittest.TestCase):
         rtk=RTK({**DEFAULTS,'ntrip_password':'private-test'},threading.Event())
         conf=rtk.configuration([1234,1235,1236])
         self.assertIn('inpstr1-path =127.0.0.1:1234\n',conf)
+        self.assertIn('pos1-dynamics =on\n',conf)
         self.assertNotIn('= ',conf)
         self.assertNotIn('private-test',conf)
 

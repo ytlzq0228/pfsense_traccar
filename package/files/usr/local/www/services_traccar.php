@@ -113,6 +113,35 @@ if ($tab !== 'status') {
     print($form);
 } else {
 ?>
+<link rel="stylesheet" href="/traccar-rtk.css?v=0.3.2">
+<div class="panel panel-default" id="rtk-quality" data-state="offline">
+<div class="panel-heading"><h2 class="panel-title">RTK 解算质量</h2></div>
+<div class="panel-body">
+<div class="rtk-hero" role="status" aria-live="polite">
+<div><p id="rtk-quality-title">正在读取 RTK 状态…</p><p id="rtk-quality-reason">等待实时数据</p></div>
+<div class="rtk-current"><p id="rtk-quality-position">当前输出：等待</p><span id="rtk-solver-badge">求解器：等待</span></div>
+</div>
+<div class="rtk-steps" aria-label="RTK 数据链路">
+<span id="rtk-step-rover">本机 MSM · 等待</span><span id="rtk-step-ntrip">NTRIP 差分 · 等待</span>
+<span id="rtk-step-solver">解算更新 · 等待</span><span id="rtk-step-accepted">RTK 采纳 · 等待</span>
+</div>
+<div class="rtk-metrics">
+<?php foreach (['sigma'=>'水平标准差','vertical'=>'垂直标准差','ratio'=>'模糊度比值 · ratio','correction'=>'差分新鲜度','satellites'=>'RTK 卫星数','solution'=>'解算新鲜度'] as $id=>$title): ?>
+<section class="rtk-metric" id="rtk-<?= $id ?>" data-tone="muted">
+<h3><?= htmlspecialchars($title) ?></h3><strong id="rtk-<?= $id ?>-value">—</strong>
+<div class="rtk-meter" aria-hidden="true"><div class="rtk-meter-fill" style="width:0"></div><span class="rtk-meter-limit"></span></div>
+<small id="rtk-<?= $id ?>-note">等待质量数据</small>
+</section>
+<?php endforeach; ?>
+</div>
+<p id="rtk-history-summary">本页最近 5 分钟 · 等待采样</p>
+<svg id="rtk-history" viewBox="0 0 300 24" preserveAspectRatio="none" role="img" aria-label="本页最近五分钟实际定位来源时间带"></svg>
+<div class="rtk-history-legend">
+<span><i style="background:#157653"></i>FIX 已采用</span><span><i style="background:#2563b8"></i>FLOAT 已采用</span>
+<span><i style="background:#6b46a1"></i>GGA 回退</span><span><i style="background:#bd3c42"></i>定位无效</span><span><i style="background:#79838e"></i>不可用 / 未启用</span>
+</div>
+<p class="text-muted" style="margin-top:9px;margin-bottom:0">时间带仅统计此页面打开期间的采样，刷新页面或服务重启后重新开始。竖线为配置门槛；灰色数值表示结果已过期或不可用。详细指标保留在下方运行状态。</p>
+</div></div>
 <div class="panel panel-default"><div class="panel-heading"><h2 class="panel-title">卫星详情</h2></div>
 <div class="panel-body">
 <style>
@@ -174,6 +203,7 @@ if ($tab !== 'status') {
 <p>Traccar 收到 HTTP 成功响应后删除缓存；APRS 在认证连接上完成 TCP 写入后删除缓存，无逐条接收回执。两通道各自保存历史、实时优先补传，断线附近可能重传；APRS 也可能漏传。位置和日志保存在系统配置的数据目录中。</p>
 </div></div>
 <script src="/js/traccar-satellites.js?v=0.1.2"></script>
+<script src="/js/traccar-rtk.js?v=0.3.2"></script>
 <script>
 events.push(function() {
     TrackerSatellites.init();
@@ -190,6 +220,7 @@ events.push(function() {
             if (!response.ok) throw new Error('HTTP ' + response.status);
             const s = await response.json(), g = s.gps || {}, f = g.fix || {}, q = s.queue || {}, n = s.network || {}, a = s.aprs || {}, aq = a.queue || {};
             const live = s.running && !s.stale;
+            if (window.TrackerRTK) TrackerRTK.render(s, live);
             document.getElementById('refresh-state').textContent = '更新于 ' + date(s.updated);
             const body = document.getElementById('tracker-status'); body.replaceChildren();
             const r=s.rtk||{}, nr=r.ntrip||{}, rs=r.solution||{}, ms=s.rtcm||{};
@@ -242,6 +273,7 @@ events.push(function() {
             const sats=document.getElementById('tracker-sats'); sats.replaceChildren();
             if (live) (g.satellites||[]).forEach(x=>row(sats,[x.system,x.prn,x.signal,x.elevation,x.azimuth,x.snr,x.used ? '是' : '否']));
         } catch(e) {
+            if (window.TrackerRTK) TrackerRTK.render(null, false);
             document.getElementById('refresh-state').textContent = '读取失败，请检查登录状态或网络';
             TrackerSatellites.render([], false);
             document.getElementById('tracker-sats').replaceChildren();

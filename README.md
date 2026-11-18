@@ -22,10 +22,10 @@
 
 ## 安装与使用
 
-本次构建产物在 `dist/pfSense-pkg-Traccar-0.3.0.pkg`，仅在上述 pfSense 版本实测。将包复制到目标机器后执行：
+本次构建产物在 `dist/pfSense-pkg-Traccar-0.3.2.pkg`，仅在上述 pfSense 版本实测。将包复制到目标机器后执行：
 
 ```sh
-pkg add /tmp/pfSense-pkg-Traccar-0.3.0.pkg
+pkg add /tmp/pfSense-pkg-Traccar-0.3.2.pkg
 ```
 
 依赖为对应 pfSense 软件源中的 `python311` 和 `py311-sqlite3`。测试机原本已安装这两个依赖。新机器若缺少依赖，先从其 **pfSense 对应的软件源** 安装，勿混用普通 FreeBSD 软件源的二进制包。
@@ -37,6 +37,7 @@ pkg add /tmp/pfSense-pkg-Traccar-0.3.0.pkg
 - APRS 配置：`/services_traccar.php?tab=aprs`，包含通道开关、台站参数、独立移动/停止间隔与发送限速。保存任意一页只更新该页字段；Passcode 不回显，留空保留已保存值。
 - RTK 与 MSM：`/services_traccar.php?tab=rtk`，包含原始观测输出、千寻账户、挂载点及解算质量门槛。NTRIP 密码不回显，留空保留。
 - 状态与日志：**系统状态（Status）→ Traccar GPS**，或 `/services_traccar.php?tab=status`
+- 状态页顶部增加 RTK 质量面板：实际采用的 FIX 为绿色、FLOAT 为蓝色、GGA 回退为紫色，独立显示求解器原始状态；水平/垂直标准差、ratio、差分与解算新鲜度、RTK 卫星数按当前配置门槛绘制。下方原有详细数据与卫星图保持完整。状态过期或请求失败时取消有效标记。
 - 也可在 **Status → Services** 启停 `traccar`。
 
 新安装默认不启用、不内置上报地址或设备 ID。升级保留既有 Traccar 设置，APRS 默认关闭且不内置呼号或 Passcode。测试机使用用户授权的 `BI1FQO-SK` 和 APRS `BI1FQO-PF`；APRS 连接 `china.aprs2.net:14580`，按本次要求移动/停止均为 30 秒，补传最小间隔 5 秒。
@@ -123,6 +124,8 @@ PYTHONPATH=/usr/local/share/pftracker python3.11 -m pftracker.gnss --current-bau
 
 默认采用 L1 单频动态模式、广播星历、30 dB-Hz 接收机信噪比门槛，保守使用 1 cm 相位 / 3 m 伪距噪声模型。只接受 Q=1 FIX 或允许的 Q=2 FLOAT，要求至少 4 颗卫星、水平标准差≤3 m、垂直≤6 m、差分年龄≤10 s、FIX ratio≥3；解算和本机 MSM 还必须新鲜。双方有效时 RTK/GGA 历元差≤1.5 s。冻结历元不会刷新解算年龄。输入断开、弱质量或超时立即回退 GGA；GGA 也失效时不生成位置。恢复及来源切换不会重放旧时间戳。
 
+0.3.2 开启 RTKLIB `pos1-dynamics=on`：位置相关状态使用位置/速度/加速度模型，避免单点初始化短时失败时直接跳过相位解算。仍需真实差分观测与全部输出门槛，不将惯性预测单独作为定位上报。本次静止设备测试显著减少解算过期；持续 FIX 和实车运动性能仍需验证，详见 [解算连续性排查](docs/RTK-STABILITY.md)。
+
 RTK 高程为椭球高；有同历元 GGA 大地水准面差时转换为与原 GGA 相同的高度基准，否则省略高度。千寻 8002 的 WGS84 / 参考历元 2005.0 作为用户提供的服务元数据，程序**不自行进行框架或历元转换**；更换 Caster/端口必须自行确认坐标基准。单频、遮挡和多路径可能使软件解算无法收敛，不能仅凭收到 MSM 或 Caster 认证成功宣称厘米级精度。
 
 账号仅保存在 pfSense 配置和权限为 0600 的运行配置，仓库、安装包、命令行、队列与状态不包含凭据。配置备份同样需要保护。NTRIP 使用账户指定的普通 TCP 服务。
@@ -154,6 +157,8 @@ PFTRACKER_RTKLIB=/usr/local/libexec/pftracker-rtkrcv PYTHONPATH=src python3.11 -
 原生解算器固定使用 RTKLIB `rtklib_2.4.3` 提交 `180043ee24b6d2b168f98b64be15f69d50046b1a`，补丁及构建过程在 `tools/build-rtklib.py`，随包保存 BSD-2-Clause 许可与 SHA256 来源记录。可用 `--prepare-only --source /path/to/RTKLIB --output sources.tgz` 准备源码供独立 FreeBSD 构建机使用，再通过 `PFTRACKER_RTKLIB=/path/to/rtkrcv` 构建软件包。Windows 打包源码的脚本权限和 CRLF 会在构建阶段转换。
 
 `tools/render-web-test.php` 是 **仅 CLI 可运行** 的原生页面渲染测试，使用独立临时会话，不修改 Web 服务器鉴权配置。`system`、`traccar`、`aprs`、`status`、`status-json`、`invalid-save` 模式用于验证；`settings` 兼容跳转至系统配置。`save-current system|traccar|aprs` 会重新保存对应页面现有配置并重启服务。
+
+RTK 时间带每 2 秒采样，仅显示当前页面最近 5 分钟的实际定位来源；FIX 样本占比、当前及最长连续 FIX 均限于已观察窗口。刷新页面或服务重启后重新开始，网络间断不计入连续 FIX，不将它当作服务端长期统计。图形状态模型可用 `node tests/test-rtk-ui.js` 验证。参见 [五分钟连续观测与质量面板验证](docs/RTK-QUALITY-UI.md)。
 
 故障集成测试只使用环回 HTTP / APRS-IS 接收器和人工 NMEA，不会把模拟坐标发到真实 Traccar 或公共 APRS-IS。参见 [原部署验证记录](docs/VALIDATION.md) 与 [LC76G / RTK 实测记录](docs/RTK-VALIDATION.md)。
 

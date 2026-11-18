@@ -151,6 +151,10 @@ class RTK:
     def configuration(self, ports):
         settings = {
             'pos1-posmode':'kinematic', 'pos1-frequency':'l1', 'pos1-soltype':'forward',
+            # Keep the phase filter advancing when noisy standalone code
+            # positioning fails. Each RTK epoch still needs relative observations
+            # and passes the unchanged external freshness/sigma/ratio gates.
+            'pos1-dynamics':'on',
             'pos1-elmask':15, 'pos1-ionoopt':'brdc', 'pos1-tropopt':'saas', 'pos1-sateph':'brdc',
             'pos1-navsys':61, 'pos2-armode':'continuous', 'pos2-gloarmode':'off',
             # Conservative consumer-receiver model: 1 cm phase / 3 m code.
