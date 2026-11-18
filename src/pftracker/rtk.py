@@ -134,8 +134,8 @@ class RTK:
         result['datum'] = 'WGS84 / reference epoch 2005.0 (caster-defined; no epoch transformation)'
         return result
 
-    def select(self, gga):
-        state = self.snapshot()
+    def select(self, gga, state=None):
+        state = self.snapshot() if state is None else state
         return select_position(gga, state['solution'], state['solution_age'],
                                state['ntrip']['correction_age'], state['msm_age'], self.c)
 

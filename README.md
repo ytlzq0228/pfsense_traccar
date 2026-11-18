@@ -22,10 +22,10 @@
 
 ## 安装与使用
 
-本次构建产物在 `dist/pfSense-pkg-Traccar-0.3.2.pkg`，仅在上述 pfSense 版本实测。将包复制到目标机器后执行：
+本次构建产物在 `dist/pfSense-pkg-Traccar-0.3.4.pkg`，仅在上述 pfSense 版本实测。将包复制到目标机器后执行：
 
 ```sh
-pkg add /tmp/pfSense-pkg-Traccar-0.3.2.pkg
+pkg add /tmp/pfSense-pkg-Traccar-0.3.4.pkg
 ```
 
 依赖为对应 pfSense 软件源中的 `python311` 和 `py311-sqlite3`。测试机原本已安装这两个依赖。新机器若缺少依赖，先从其 **pfSense 对应的软件源** 安装，勿混用普通 FreeBSD 软件源的二进制包。
@@ -39,6 +39,7 @@ pkg add /tmp/pfSense-pkg-Traccar-0.3.2.pkg
 - 状态与日志：**系统状态（Status）→ Traccar GPS**，或 `/services_traccar.php?tab=status`
 - 状态页顶部增加 RTK 质量面板：实际采用的 FIX 为绿色、FLOAT 为蓝色、GGA 回退为紫色，独立显示求解器原始状态；水平/垂直标准差、ratio、差分与解算新鲜度、RTK 卫星数按当前配置门槛绘制。下方原有详细数据与卫星图保持完整。状态过期或请求失败时取消有效标记。
 - 也可在 **Status → Services** 启停 `traccar`。
+- 首页 Dashboard 原生组件 **GPS / RTK**：从首页“添加组件”面板选择后保存布局。显示实际定位来源、原生求解器状态、水平标准差、定位卫星、差分接收年龄、实时坐标和 Traccar 队列，可跳转详情和 RTK 设置。沿用 FIX 绿 / FLOAT 蓝 / GGA 紫的配色，过期或连接失败灰化；每 2 秒读取现有受登录保护的状态 API，不额外打开 GPS。仅有 Dashboard 权限而无 Traccar 页面权限的账户不能读取状态。
 
 新安装默认不启用、不内置上报地址或设备 ID。升级保留既有 Traccar 设置，APRS 默认关闭且不内置呼号或 Passcode。测试机使用用户授权的 `BI1FQO-SK` 和 APRS `BI1FQO-PF`；APRS 连接 `china.aprs2.net:14580`，按本次要求移动/停止均为 30 秒，补传最小间隔 5 秒。
 
@@ -73,7 +74,8 @@ pkg add /tmp/pfSense-pkg-Traccar-0.3.2.pkg
 - APRS 历史点使用原始 UTC 的 `DDHHMMz` 时间戳，并附完整 UTC 日期和秒以保留月份/年份信息；部分 APRS 客户端对长时间历史、中文或非数字 SSID 的显示支持不同。APRS 标准位置精度为分的小数点后两位；速度为 knots，高度为 feet，负高度省略。
 - 两通道各自使用独立发送线程与数据库，单个通道网络失败不阻塞另一个。每个通道的实时优先与历史补传共用有超时的发送线程；慢请求期间新点仍持续入库，当前请求完成后优先处理新点。持续产生速率超过网络吞吐时会形成积压。
 - 仅采集真实有效定位。无定位期间不新增位置，也不做惯性推算；已有历史点仍可按原始时间戳补传。卫星展示条目 15 秒无更新后移除，界面将最后位置明确标为历史状态。
-- HDOP 是几何精度因子，不等于米制误差。GGA 来源只传 `hdop`；RTK 来源的 `accuracy` 为解算水平标准差（不是保证误差），另传 `positionSource`、`rtkAge`、`rtkRatio`。速度来自同时刻的 RMC，按 OsmAnd 默认单位 knots 发送。
+- HDOP 是几何精度因子，不等于米制误差。GGA 来源保留 `hdop`、省略未知的 `accuracy`；RTK 来源的 `accuracy` 为解算水平标准差（不是保证误差），另传 `positionSource`、`rtkAge`、`rtkRatio` 等诊断。速度来自同时刻的 RMC，按 OsmAnd 默认单位 knots 发送。
+- 0.3.4 增加 Traccar `status`、`satVisible` 及 RTK/NTRIP 诊断属性。`status` 是实际采用的 FIX/FLOAT/GGA，`rtkState` 是最近求解器状态，二者独立；回退不把失效 RTK 的标准差写成 GGA `accuracy`。全部字段随采样点入队冻结，补传保持原值。完整字段和单位见 [Traccar 字段说明](docs/TRACCAR-FIELDS.md)。
 - 缓存 MiB 为数据和每条固定开销的估算预算，索引、WAL、SQLite 已分配空闲页及日志另占空间。点数上限和磁盘保留空间共同限制增长。缓存预算与点数上限分别应用于两个队列；全部启用时，合计预算为配置值的两倍。队列和日志必须做好容量规划。
 - 磁盘耗尽、损坏或底层存储不兑现同步写入时不能承诺零丢失。重启恢复已通过进程级故障验证；没有对测试防火墙执行整机重启或硬断电。
 - 自动 CH340 模式只在唯一设备匹配时打开；多设备需要指定 `ugenBUS.ADDRESS`。指定地址可能在插拔后变化。当前读法支持芯片版本 ≥0x30，实机 CH340 已验证。
@@ -159,6 +161,8 @@ PFTRACKER_RTKLIB=/usr/local/libexec/pftracker-rtkrcv PYTHONPATH=src python3.11 -
 `tools/render-web-test.php` 是 **仅 CLI 可运行** 的原生页面渲染测试，使用独立临时会话，不修改 Web 服务器鉴权配置。`system`、`traccar`、`aprs`、`status`、`status-json`、`invalid-save` 模式用于验证；`settings` 兼容跳转至系统配置。`save-current system|traccar|aprs` 会重新保存对应页面现有配置并重启服务。
 
 RTK 时间带每 2 秒采样，仅显示当前页面最近 5 分钟的实际定位来源；FIX 样本占比、当前及最长连续 FIX 均限于已观察窗口。刷新页面或服务重启后重新开始，网络间断不计入连续 FIX，不将它当作服务端长期统计。图形状态模型可用 `node tests/test-rtk-ui.js` 验证。参见 [五分钟连续观测与质量面板验证](docs/RTK-QUALITY-UI.md)。
+
+Dashboard 注册文件和脚本遵循原生 widget 目录结构，支持拖动、折叠、关闭和保存位置，不允许重复副本。包安装只注册可选组件，不自动改动其他机器的首页布局；本次测试机已保留原有七个组件并添加 GPS / RTK。可执行 `python3.11 tools/test-widget-render.py --enabled` 验证实际首页集成。桌面 640 px、手机 390 px，以及 FIX/FLOAT/GGA/过期和请求失败场景已通过 Chrome 检查。
 
 故障集成测试只使用环回 HTTP / APRS-IS 接收器和人工 NMEA，不会把模拟坐标发到真实 Traccar 或公共 APRS-IS。参见 [原部署验证记录](docs/VALIDATION.md) 与 [LC76G / RTK 实测记录](docs/RTK-VALIDATION.md)。
 

@@ -127,7 +127,7 @@ def post(item, timeout):
         return code
 
 
-def make_payload(fix, config, moving, device_temp=None):
+def make_payload(fix, config, moving, device_temp=None, diagnostics=None):
     p = dict(id=config['device_id'], timestamp=fix['epoch'], lat=round(fix['lat'],7),
              lon=round(fix['lon'],7), valid='true', sat=fix['sat'],
              motion='true' if moving else 'false', fixQuality=fix['quality'])
@@ -140,6 +140,44 @@ def make_payload(fix, config, moving, device_temp=None):
                  rtkAge=fix['rtk_age'], rtkRatio=fix['rtk_ratio'])
     else:
         p['positionSource']='gga'
+    p['status']={'rtk_fix':'FIX','rtk_float':'FLOAT','gga':'GGA'}[p['positionSource']]
+    p['rtkUsed']='true' if p['positionSource']!='gga' else 'false'
+    p['rtkEnabled']='true' if config['rtk_enabled'] else 'false'
+    if diagnostics is not None:
+        # Explicit whitelist: never copy configuration, credentials or arbitrary
+        # error strings into a position. Preserve this sample's state in outbox.
+        r=diagnostics.get('rtk') or {}
+        n=r.get('ntrip') or {}
+        q=r.get('solution') or {}
+        g=diagnostics.get('gga') or {}
+        cm=diagnostics.get('rtcm') or {}
+        p['rtkState']=r.get('state','disabled' if not config['rtk_enabled'] else 'unknown')
+        p['rtkFallbackReason']=diagnostics.get('fallback_reason') or 'none'
+        p['ntripState']=n.get('state','disabled' if not config['rtk_enabled'] else 'unknown')
+        if isinstance(g.get('valid'),bool):
+            p['ggaValid']='true' if g['valid'] else 'false'
+        visible={(s.get('system'),s.get('prn')) for s in g.get('satellites',[]) if s.get('prn') is not None}
+        if visible:
+            p['satVisible']=len(visible)
+        age=r.get('solution_age')
+        p['rtkSolutionFresh']='true' if isinstance(age,(int,float)) and math.isfinite(age) and 0<=age<=config['fix_timeout'] else 'false'
+        numeric={
+            'rtkQuality':q.get('status'), 'rtkSat':q.get('sat'),
+            'rtkSigmaH':q.get('sigma_horizontal'), 'rtkSigmaV':q.get('sigma_up'),
+            'rtkRatio':q.get('ratio'), 'rtkAge':q.get('age'),
+            'rtkSolutionAge':age, 'rtkMsmAge':r.get('msm_age'),
+            'ntripAge':n.get('correction_age'), 'ggaAge':g.get('fix_age'),
+            'rtcmFrames':cm.get('valid_frames'), 'rtcmCrcErrors':cm.get('bad_crc'),
+        }
+        raw_epoch=(g.get('fix') or {}).get('epoch')
+        epoch=q.get('epoch')
+        if isinstance(epoch,(int,float)) and isinstance(raw_epoch,(int,float)):
+            numeric['rtkGgaTimeOffset']=epoch-raw_epoch
+        for name,value in numeric.items():
+            if isinstance(value,(int,float)) and not isinstance(value,bool) and math.isfinite(value):
+                p[name]=round(value,3)
+        if isinstance(epoch,(int,float)) and math.isfinite(epoch):
+            p['rtkTimestamp']=datetime.fromtimestamp(epoch,timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')
     if device_temp is not None and math.isfinite(device_temp) and -40 <= device_temp <= 150:
         p['deviceTemp'] = round(device_temp, 1)
     for key in ('speed','bearing','altitude'):
@@ -247,7 +285,7 @@ class Service:
                 continue
             self.stop.wait(1/self.c['upload_rate'])
 
-    def capture(self, fix, sampler, aprs=False):
+    def capture(self, fix, sampler, aprs=False, diagnostics=None):
         channel = 'APRS' if aprs else 'Traccar'
         try:
             if shutil.disk_usage(self.directory).free < self.c['reserve_mb']*1024*1024:
@@ -257,7 +295,7 @@ class Service:
                 endpoint = 'aprs://%s:%s' % (self.c['aprs_host'], self.c['aprs_port'])
                 queued = self.aprs_outbox.enqueue(payload, endpoint)
             else:
-                payload = make_payload(fix, self.c, sampler.moving, self.temperature_snapshot()[0])
+                payload = make_payload(fix, self.c, sampler.moving, self.temperature_snapshot()[0], diagnostics)
                 queued = self.outbox.enqueue(payload, self.c['server_url'])
             if queued and self.positions:
                 self.positions.info(json.dumps({'channel': channel, **payload}, ensure_ascii=False, separators=(',', ':')))
@@ -329,10 +367,13 @@ class Service:
                     self.log.warning('GPS unavailable: %s; retry in %ss', e, backoff)
                     backoff = min(30, backoff*2)
                 now = time.monotonic()
-                gps = parser.snapshot(now, self.c['fix_timeout'], self.c['max_hdop'], self.c['min_sat'])
+                raw_gps = parser.snapshot(now, self.c['fix_timeout'], self.c['max_hdop'], self.c['min_sat'])
+                gps = raw_gps
+                rtk_state = {'state':'disabled'}
                 if self.rtk:
                     self.rtk.ntrip.set_gga(latest_gga if gps['valid'] else None)
-                    gps=self.rtk.select(gps)
+                    rtk_state=self.rtk.snapshot()
+                    gps=self.rtk.select(gps,rtk_state)
                 else:
                     gps.update(source='gga',rtk_used=False)
                 state = (gps['valid'], gps['reason'])
@@ -341,7 +382,9 @@ class Service:
                     last_state = state
                 fix = sampler.choose(gps, now)
                 if fix and self.c['traccar_enabled']:
-                    self.capture(fix, sampler)
+                    diagnostics=dict(rtk=rtk_state,gga=raw_gps,rtcm=framing.snapshot(now),
+                                     fallback_reason=gps.get('fallback_reason'))
+                    self.capture(fix, sampler, diagnostics=diagnostics)
                 aprs_fix = aprs_sampler.choose(gps, now)
                 if aprs_fix and self.c['aprs_enabled']:
                     self.capture(aprs_fix, aprs_sampler, aprs=True)
@@ -352,7 +395,7 @@ class Service:
                     state = dict(device_temp=device_temp, device_temp_source=temp_source, version=__version__, pid=os.getpid(), updated=time.time(), started=self.started,
                                  gps=gps, moving=sampler.moving, queue=self.outbox.stats(), network=network,
                                  aprs={**self.aprs.snapshot(), 'queue': self.aprs_outbox.stats()},
-                                 rtcm=framing.snapshot(now), rtk=self.rtk.snapshot() if self.rtk else {'state':'disabled'},
+                                 rtcm=framing.snapshot(now), rtk=rtk_state,
                                  storage_error=self.storage_error, free_bytes=shutil.disk_usage(self.directory).free,
                                  source=self.c['source'], device=getattr(source, 'name', self.c['serial_path']) if source else None)
                     atomic_json(self.status, state)

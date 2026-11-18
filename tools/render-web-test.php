@@ -23,6 +23,12 @@ $_SERVER['HTTPS']='on';
 $mode = $argv[1] ?? 'settings';
 $_GET=['tab'=>$mode];
 $_POST=[];
+if ($mode === 'dashboard') {
+    $_GET=[];
+    $_SERVER['REQUEST_URI']='/index.php';
+    $_SERVER['SCRIPT_NAME']='/index.php';
+    $_SERVER['SCRIPT_FILENAME']='/usr/local/www/index.php';
+}
 if ($mode === 'status-json') { $_GET=['action'=>'status']; }
 if ($mode === 'invalid-save' || $mode === 'save-current') {
     require_once('/usr/local/pkg/traccar.inc');
@@ -48,4 +54,4 @@ register_shutdown_function(function() use ($dir) {
     rmdir($dir);
 });
 chdir('/usr/local/www');
-require('/usr/local/www/services_traccar.php');
+require($mode === 'dashboard' ? '/usr/local/www/index.php' : '/usr/local/www/services_traccar.php');

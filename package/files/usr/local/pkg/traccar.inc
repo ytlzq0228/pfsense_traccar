@@ -54,6 +54,7 @@ function traccar_status() {
     $s['running'] = traccar_running();
     $s['stale'] = empty($s['updated']) || time() - $s['updated'] > 10;
     $c = traccar_config();
+    $s['channels'] = ['traccar' => $c['traccar_enabled'], 'aprs' => $c['aprs_enabled']];
     $s['rtk']['limits'] = [
         'solution_age' => $c['fix_timeout'], 'correction_age' => $c['rtk_max_age'],
         'sigma_horizontal' => $c['rtk_max_sigma'], 'sigma_up' => $c['rtk_max_sigma'] * 2,
