@@ -164,6 +164,8 @@ RTK 时间带每 2 秒采样，仅显示当前页面最近 5 分钟的实际定�
 
 Dashboard 注册文件和脚本遵循原生 widget 目录结构，支持拖动、折叠、关闭和保存位置，不允许重复副本。包安装只注册可选组件，不自动改动其他机器的首页布局；本次测试机已保留原有七个组件并添加 GPS / RTK。可执行 `python3.11 tools/test-widget-render.py --enabled` 验证实际首页集成。桌面 640 px、手机 390 px，以及 FIX/FLOAT/GGA/过期和请求失败场景已通过 Chrome 检查。
 
+构建会过滤 macOS 的 `._*`、`.DS_Store`、`__MACOSX`，并在生成清单前拒绝残留元数据。不要将这些文件手工复制进 pfSense 的 widget 目录：其中 `.inc` 侧文件会被首页当作 include 输出，造成乱码和全页兼容模式变化。详见 [Dashboard 元数据与字号排查](docs/DASHBOARD-METADATA.md)。
+
 故障集成测试只使用环回 HTTP / APRS-IS 接收器和人工 NMEA，不会把模拟坐标发到真实 Traccar 或公共 APRS-IS。参见 [原部署验证记录](docs/VALIDATION.md) 与 [LC76G / RTK 实测记录](docs/RTK-VALIDATION.md)。
 
 协议与平台参考：[APRS-IS 登录与传输](https://www.aprs-is.net/Connecting.aspx)、[APRS 登录响应](https://www.aprs-is.net/ServerDesign.aspx)、[APRS 位置报文规范](https://www.aprs.org/doc/APRS101.PDF)、[pfSense 包开发](https://docs.netgate.com/pfsense/en/latest/development/develop-packages.html)、[Traccar OsmAnd](https://www.traccar.org/osmand/)、[FreeBSD CH340 寄存器定义](https://github.com/freebsd/freebsd-src/blob/main/sys/dev/usb/serial/uchcom.c)。

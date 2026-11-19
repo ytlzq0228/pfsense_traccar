@@ -221,4 +221,6 @@ __marimo__/
 
 # Local operating-system metadata
 .DS_Store
+._*
+__MACOSX/
 参考/*

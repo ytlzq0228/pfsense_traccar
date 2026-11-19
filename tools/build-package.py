@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import hashlib
+from package_hygiene import source_ignore, assert_clean_tree
 
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(root/'src'))
@@ -20,9 +21,9 @@ output = Path(sys.argv[1] if len(sys.argv)>1 else root/'dist').resolve()
 output.mkdir(parents=True,exist_ok=True)
 with tempfile.TemporaryDirectory(prefix='traccar-build-') as temporary:
     work=Path(temporary)
-    stage=work/'stage'; shutil.copytree(root/'package/files',stage)
+    stage=work/'stage'; shutil.copytree(root/'package/files',stage,ignore=source_ignore)
     code=stage/'usr/local/share/pftracker'
-    shutil.copytree(root/'src/pftracker',code/'pftracker',ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
+    shutil.copytree(root/'src/pftracker',code/'pftracker',ignore=source_ignore)
     (code/'defaults.json').write_text(json.dumps(DEFAULTS,indent=2)+'\n')
     (code/'LICENSE').write_text((root/'LICENSE').read_text())
     # Windows source archives do not preserve the executable bit.
@@ -56,6 +57,7 @@ with tempfile.TemporaryDirectory(prefix='traccar-build-') as temporary:
                            'post-deinstall':'/etc/rc.packages Traccar POST-DEINSTALL'})
     metadata=work/'meta'; metadata.mkdir()
     (metadata/'+MANIFEST').write_text(json.dumps(manifest))
+    assert_clean_tree(stage)
     paths=sorted('/'+str(p.relative_to(stage)) for p in stage.rglob('*') if p.is_file())
     (metadata/'plist').write_text('\n'.join(p.lstrip('/') for p in paths)+'\n')
     # Explicit paths avoid dependence on ports/pkg-plist prefix expansion.

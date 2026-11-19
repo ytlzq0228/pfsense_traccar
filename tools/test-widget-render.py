@@ -9,7 +9,11 @@ import subprocess
 import sys
 
 helper=Path(__file__).with_name('render-web-test.php')
-html=subprocess.check_output(['php',str(helper),'dashboard'],text=True)
+raw=subprocess.check_output(['php',str(helper),'dashboard'])
+# A binary ._*.inc included before head.inc forces quirks mode and changes
+# table font sizes across unrelated widgets, even with correctly scoped CSS.
+assert raw.lstrip().lower().startswith(b'<!doctype html'), 'Unexpected output before Dashboard DOCTYPE (check AppleDouble metadata)'
+html=raw.decode('utf8')
 assert '</html>' in html and 'GPS / RTK' in html
 if '--enabled' in sys.argv:
     assert 'id="widget-traccar-0"' in html
